@@ -33,9 +33,9 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/oagentkit/obs v0.2.1 // indirect
-	github.com/oekit/concurrency v0.13.1 // indirect
+	github.com/oekit/concurrency v0.16.0 // indirect
 	github.com/oekit/logx v0.7.0 // indirect
-	github.com/oekit/pkg v0.13.0 // indirect
+	github.com/oekit/pkg v0.14.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.9 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
