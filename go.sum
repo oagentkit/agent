@@ -79,8 +79,8 @@ github.com/modern-go/reflect2 v1.0.2 h1:xBagoLtFs94CBntxluKeaWgTMpvLxC4ur3nMaC9G
 github.com/modern-go/reflect2 v1.0.2/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
 github.com/nikolalohinski/gonja v1.5.3 h1:GsA+EEaZDZPGJ8JtpeGN78jidhOlxeJROpqMT9fTj9c=
 github.com/nikolalohinski/gonja v1.5.3/go.mod h1:RmjwxNiXAEqcq1HeK5SSMmqFJvKOfTfXhkJv6YBtPa4=
-github.com/oagentkit/llm v0.4.0 h1:ac7vFYSBaEv00QEpwksEB1KRl2rwgigfjdqTUQGwzDU=
-github.com/oagentkit/llm v0.4.0/go.mod h1:vV3VPPvLeHrnV3Ym6I1n3lOVsEYosKLI2i8oRY835UI=
+github.com/oagentkit/llm v0.5.0 h1:WhFACAZ6freqkVKSzuGE4++NZSF9yfQn0qyNZoXjWFw=
+github.com/oagentkit/llm v0.5.0/go.mod h1:o66aIHRHwq5khSgeCQW7BFBknBdxSrts29xqXKj+Qws=
 github.com/oagentkit/obs v0.2.1 h1:Rmuh2LmrrnqHj+44GmdL4zv5gnhA8jh7twNbv0cgqII=
 github.com/oagentkit/obs v0.2.1/go.mod h1:qN48rKA9fYl+Y/VKWzUXIsbsbAH1nHjUCm8bbDqCiAY=
 github.com/oagentkit/textx v0.1.0 h1:6VythHY7OXD8htFgvdDuq8SwJDjgP2EExoiUNd4gU1s=
