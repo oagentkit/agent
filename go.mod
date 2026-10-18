@@ -7,7 +7,7 @@ toolchain go1.27.2
 require (
 	github.com/cloudwego/eino v0.9.21
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
-	github.com/oagentkit/llm v0.4.0
+	github.com/oagentkit/llm v0.5.0
 	github.com/oagentkit/textx v0.1.0
 	gopkg.in/yaml.v3 v3.0.1
 )
