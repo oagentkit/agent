@@ -14,7 +14,7 @@ import (
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/oagentkit/llm/llm"
+	"github.com/oagentkit/llm"
 )
 
 // Route 一条路由：意图类别 + 处理链。

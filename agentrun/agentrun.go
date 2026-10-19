@@ -30,7 +30,7 @@ import (
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
 
-	"github.com/oagentkit/llm/llm"
+	"github.com/oagentkit/llm"
 )
 
 // 默认迭代上限（ADK ReAct 循环轮数；防失控循环）。
