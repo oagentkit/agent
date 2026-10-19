@@ -34,7 +34,7 @@ require (
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/oagentkit/obs v0.5.0 // indirect
 	github.com/oekit/concurrency v0.17.1 // indirect
-	github.com/oekit/logx v0.7.0 // indirect
+	github.com/oekit/logx v0.7.1 // indirect
 	github.com/oekit/pkg v0.15.1 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.9 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
