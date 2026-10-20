@@ -5,7 +5,7 @@ go 1.24.0
 require (
 	github.com/cloudwego/eino v0.9.21
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
-	github.com/oagentkit/llm v0.14.1
+	github.com/oagentkit/llm v0.14.2
 	github.com/oagentkit/textx v0.6.1
 	gopkg.in/yaml.v3 v3.0.1
 )
