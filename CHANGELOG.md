@@ -2,17 +2,21 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.10.1] — 2026-10-20
+
+- [round-1] fix(go): Go 地板降到 go 1.24.0，CI go-version 同步到 1.24 (#10)
+
 ## [v0.10.0] — 2026-10-19
 
 - 杂务(deps)：依赖地板对齐远端最新（llm v0.11.0 / textx v0.5.0 / obs v0.7.0） (13)
 
 ## [v0.9.1] — 2026-10-19
 
-- 杂务(deps)：oekit/logx 地板 v0.7.0 → v0.7.1
+- 杂务(deps)：oekit/logx 地板 v0.7.0 → v0.7.1 (#8)
 
 ## [v0.9.0] — 2026-10-19
 
-- 杂务(deps)：依赖地板对齐远端最新（textx v0.4.0 / obs v0.5.0 / pkg v0.15.1 / concurrency v0.17.1）
+- 杂务(deps)：依赖地板对齐远端最新（textx v0.4.0 / obs v0.5.0 / pkg v0.15.1 / concurrency v0.17.1） (#8)
 
 ## [v0.8.0] — 2026-10-19
 
@@ -63,11 +67,11 @@ AGENTS.md 三条纪律：编排层不得绕过 llm/mcpkit/toolgate 门面直连�
 反思与黑板协作必须有深度上限与终止条件、派发 allow 矩阵默认拒绝且拒绝自派发。
 门禁：go build / go vet / go test -race 6 包全绿，gofmt 干净。
 
-- 杂务(deps)：依赖地板升到「历史最新 + 0.1.0」
-- 杂务(deps)：跟进最新 tag
-- 杂务(deps)：oekit 依赖升级
-- 杂务(deps)：llm v0.4.0 → v0.5.0（本轮新发 tag 的连锁升级）
-- 杂务(deps)：跨仓依赖 llm v0.4.0 / obs v0.2.1，并移除已不需要的 runtime
+- 杂务(deps)：依赖地板升到「历史最新 + 0.1.0」 (#5)
+- 杂务(deps)：跟进最新 tag (#4)
+- 杂务(deps)：oekit 依赖升级 (#3)
+- 杂务(deps)：llm v0.4.0 → v0.5.0（本轮新发 tag 的连锁升级） (#2)
+- 杂务(deps)：跨仓依赖 llm v0.4.0 / obs v0.2.1，并移除已不需要的 runtime (#1)
 - 杂务(deps)：oekit/concurrency v0.12.0 -> v0.13.1
 - 杂务(deps)：oekit 三模块升至最新（pkg v0.13.0 / concurrency v0.12.0 / logx v0.7.0）
 - 杂务(deps)：oekit/concurrency v0.6.0 -> v0.9.0
