@@ -4,7 +4,34 @@
 
 ## [v0.10.1] — 2026-10-20
 
-- [round-1] fix(go): Go 地板降到 go 1.24.0，CI go-version 同步到 1.24 (#10)
+### 修复(go)：Go 地板降到 go 1.24.0，CI go-version 同步到 1.24
+
+承接 matrix-tools#22（tier0 地板被无谓抬高）与 #34（tier1+ 排查结论）——
+本仓是 tier3 编排层，但依赖链上**没有任何包要求高于 1.24 的 Go 版本**。
+## 依据
+- **依赖链全兼容**：llm v0.13.1 / textx v0.6.1 的 tag 快照都是 go 1.24.0
+- **代码兼容 1.24**：真实 go1.24.0 工具链（`GOTOOLCHAIN=go1.24.0`）
+  build + test 全绿——实跑，不是推断
+- **门槛是 go 指令不是 toolchain**（编译器实证）
+## toolchain 行的取舍：删掉
+toolchain 不构成门槛，但 `toolchain go1.27.2` 会让 `go` 命令**自动下载**
+1.27.2，与「最低支持版本是 1.24」相悖。删掉，也与基座 oekit 六个基础仓一致。
+## 依赖地板同步重钉
+`require` 抬到 **llm v0.13.1 / textx v0.6.1**（它们本轮刚发的、
+tag 快照里才是 go 1.24.0 的新 tag）——否则 MVS 会拉到旧 tag 的 1.26 地板，
+降级形同虚设。obs v0.9.2 经 `go mod tidy` 后不再是直接依赖，已移除。
+## 改动
+- `go.mod`：`go 1.26.0` → `go 1.24.0`；删 `toolchain go1.27.2`；
+  内部 require 抬到 llm v0.13.1 / textx v0.6.1
+- `.github/workflows/ci.yml`：`go-version: '1.26'` → `'1.24'`
+CI 的 go-version 与 go.mod 的 go 指令**成对**——跨层通用纪律，不因本次降级而放松。
+## 验证
+- `GOTOOLCHAIN=go1.24.0 go build ./...` → exit 0
+- `GOTOOLCHAIN=go1.24.0 go test ./...` → 全绿
+- `go mod tidy` → 零差异
+门禁见 oagentkit/matrix-tools#35（`scripts/verify_go_floor.py` 判据 4：
+tier1+ 不得「依赖链全兼容却声明更高」）。
+Closes oagentkit/matrix-tools#34
 
 ## [v0.10.0] — 2026-10-19
 
@@ -12,11 +39,11 @@
 
 ## [v0.9.1] — 2026-10-19
 
-- 杂务(deps)：oekit/logx 地板 v0.7.0 → v0.7.1 (#8)
+- 杂务(deps)：oekit/logx 地板 v0.7.0 → v0.7.1
 
 ## [v0.9.0] — 2026-10-19
 
-- 杂务(deps)：依赖地板对齐远端最新（textx v0.4.0 / obs v0.5.0 / pkg v0.15.1 / concurrency v0.17.1） (#8)
+- 杂务(deps)：依赖地板对齐远端最新（textx v0.4.0 / obs v0.5.0 / pkg v0.15.1 / concurrency v0.17.1）
 
 ## [v0.8.0] — 2026-10-19
 
@@ -67,11 +94,11 @@ AGENTS.md 三条纪律：编排层不得绕过 llm/mcpkit/toolgate 门面直连�
 反思与黑板协作必须有深度上限与终止条件、派发 allow 矩阵默认拒绝且拒绝自派发。
 门禁：go build / go vet / go test -race 6 包全绿，gofmt 干净。
 
-- 杂务(deps)：依赖地板升到「历史最新 + 0.1.0」 (#5)
-- 杂务(deps)：跟进最新 tag (#4)
-- 杂务(deps)：oekit 依赖升级 (#3)
-- 杂务(deps)：llm v0.4.0 → v0.5.0（本轮新发 tag 的连锁升级） (#2)
-- 杂务(deps)：跨仓依赖 llm v0.4.0 / obs v0.2.1，并移除已不需要的 runtime (#1)
+- 杂务(deps)：依赖地板升到「历史最新 + 0.1.0」
+- 杂务(deps)：跟进最新 tag
+- 杂务(deps)：oekit 依赖升级
+- 杂务(deps)：llm v0.4.0 → v0.5.0（本轮新发 tag 的连锁升级）
+- 杂务(deps)：跨仓依赖 llm v0.4.0 / obs v0.2.1，并移除已不需要的 runtime
 - 杂务(deps)：oekit/concurrency v0.12.0 -> v0.13.1
 - 杂务(deps)：oekit 三模块升至最新（pkg v0.13.0 / concurrency v0.12.0 / logx v0.7.0）
 - 杂务(deps)：oekit/concurrency v0.6.0 -> v0.9.0
