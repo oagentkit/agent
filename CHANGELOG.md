@@ -2,6 +2,62 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.10.1] — 2026-10-21
+
+### 修复(go)：Go 地板降到 go 1.24.0，CI go-version 同步到 1.24
+
+承接 matrix-tools#22（tier0 地板被无谓抬高）与 #34（tier1+ 排查结论）——
+本仓是 tier3 编排层，但依赖链上**没有任何包要求高于 1.24 的 Go 版本**。
+## 依据
+- **依赖链全兼容**：llm v0.13.1 / textx v0.6.1 的 tag 快照都是 go 1.24.0
+- **代码兼容 1.24**：真实 go1.24.0 工具链（`GOTOOLCHAIN=go1.24.0`）
+  build + test 全绿——实跑，不是推断
+- **门槛是 go 指令不是 toolchain**（编译器实证）
+## toolchain 行的取舍：删掉
+toolchain 不构成门槛，但 `toolchain go1.27.2` 会让 `go` 命令**自动下载**
+1.27.2，与「最低支持版本是 1.24」相悖。删掉，也与基座 oekit 六个基础仓一致。
+## 依赖地板同步重钉
+`require` 抬到 **llm v0.13.1 / textx v0.6.1**（它们本轮刚发的、
+tag 快照里才是 go 1.24.0 的新 tag）——否则 MVS 会拉到旧 tag 的 1.26 地板，
+降级形同虚设。obs v0.9.2 经 `go mod tidy` 后不再是直接依赖，已移除。
+## 改动
+- `go.mod`：`go 1.26.0` → `go 1.24.0`；删 `toolchain go1.27.2`；
+  内部 require 抬到 llm v0.13.1 / textx v0.6.1
+- `.github/workflows/ci.yml`：`go-version: '1.26'` → `'1.24'`
+CI 的 go-version 与 go.mod 的 go 指令**成对**——跨层通用纪律，不因本次降级而放松。
+## 验证
+- `GOTOOLCHAIN=go1.24.0 go build ./...` → exit 0
+- `GOTOOLCHAIN=go1.24.0 go test ./...` → 全绿
+- `go mod tidy` → 零差异
+门禁见 oagentkit/matrix-tools#35（`scripts/verify_go_floor.py` 判据 4：
+tier1+ 不得「依赖链全兼容却声明更高」）。
+Closes oagentkit/matrix-tools#34
+
+- 杂务(deps)：oagentkit/llm 依赖地板抬到 v0.14.2
+
+llm v0.14.1 → v0.14.2 是**定价覆盖键归一化**的修复（oagentkit/llm#26 的续），
+非破坏性变更，本仓无需改代码，只抬地板。
+为什么必须先发这一版：agent 的 v0.10.1 待发版段里带着「Go 地板降到 1.24.0」
+与「oekit 依赖地板抬到 v0.18.0」两项，但 go.mod 里 llm 还钉在 v0.14.1。
+按矩阵的「打 tag 时刻地板必须是当时的最新」纪律，先补上这一处地板，
+再打 v0.10.1 的 tag——否则 tag 快照会把一个已落后的地板钉死。
+本地门禁：go mod tidy 无差异 / go build / go vet 通过。
+
+- 杂务(deps)：oekit 依赖地板抬到 v0.18.0
+
+oekit 姊妹矩阵的依赖地板对齐到最新：
+- github.com/oekit/pkg        v0.17.0 → v0.18.0
+- github.com/oekit/concurrency v0.17.1 → v0.18.0
+- github.com/oekit/logx       已是最新 v0.7.1，不动
+oekit v0.18.0 的两个发布都是**纯增量**，无破坏性变更：
+- pkg：jsonrepair 补抽数组原语 ExtractArray；
+- concurrency：新增 `DoValue[T]`（带返回值的重试），`Do` 改为委托给它——
+  退避序列、抖动、MaxDelay 封顶、DelayHint 优先、Retryable 门控、ctx 取消
+  **只有一份实现**（此前这类调用方只能自己重写一遍退避，且常丢掉 DelayHint 语义）。
+依据 oagentkit/matrix-tools#44 的还债流程：依赖地板对齐到发版时刻的最新。
+本仓本轮不发 tag（不在发版集内），地板在 main 上就位，下次发版自然带上。
+
+
 ## [v0.10.0] — 2026-10-19
 
 - 杂务(deps)：依赖地板对齐远端最新（llm v0.11.0 / textx v0.5.0 / obs v0.7.0） (13)
