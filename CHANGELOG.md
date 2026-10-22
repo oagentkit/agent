@@ -29,6 +29,8 @@ router 此前只有一条分类执行体：LLM（自回归生成）。但「把�
 门禁：gofmt -l（空）/ go vet / go build ./... / go test -race -count=1 ./... 全过
 （router 新增 7 条用例）。
 
+- 杂务(deps)：依赖地板跟到发版时刻的最新——oagentkit/llm v0.16.0（决策面客户端落地）/ oekit/concurrency v0.20.1 / oekit/pkg v0.22.0
+
 
 ## [v0.10.5] — 2026-10-22
 
