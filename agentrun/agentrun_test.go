@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/tool"
@@ -24,6 +25,9 @@ type mockResponse struct {
 	content   string
 	reasoning string // reasoning_content（推理型模型的思考过程，可选）
 	toolCall  *mockToolCall
+	// chunkDelayMS 每帧之间的生成耗时模拟（毫秒）：真实网关逐 token 产出，
+	// 帧间隔即生成耗时——用它把「用量通道的耗时测量点」钉成可断言的量。
+	chunkDelayMS int
 }
 
 type mockToolCall struct {
@@ -150,16 +154,25 @@ func (m *mockOpenAI) writeStreamChunks(w http.ResponseWriter, resp mockResponse)
 		}
 	}
 	write(sseChunk(map[string]any{"role": "assistant"}, nil))
+	// gap 帧间隔（模拟逐 token 生成耗时）：首帧之后、每个内容帧之前各等一次。
+	gap := func() {
+		if resp.chunkDelayMS > 0 {
+			time.Sleep(time.Duration(resp.chunkDelayMS) * time.Millisecond)
+		}
+	}
 	if resp.reasoning != "" {
 		for _, part := range splitChunks(resp.reasoning, 2) {
+			gap()
 			write(sseChunk(map[string]any{"reasoning_content": part}, nil))
 		}
 	}
 	if resp.toolCall != nil {
+		gap()
 		write(sseChunk(map[string]any{"tool_calls": []any{map[string]any{
 			"index": 0, "id": resp.toolCall.id, "type": "function",
 			"function": map[string]any{"name": resp.toolCall.name, "arguments": ""},
 		}}}, nil))
+		gap()
 		write(sseChunk(map[string]any{"tool_calls": []any{map[string]any{
 			"index":    0,
 			"function": map[string]any{"arguments": resp.toolCall.arguments},
@@ -167,6 +180,7 @@ func (m *mockOpenAI) writeStreamChunks(w http.ResponseWriter, resp mockResponse)
 		write(sseChunk(map[string]any{}, "tool_calls"))
 	} else {
 		for _, part := range splitChunks(resp.content, 2) {
+			gap()
 			write(sseChunk(map[string]any{"content": part}, nil))
 		}
 		write(sseChunk(map[string]any{}, "stop"))
@@ -288,6 +302,45 @@ func TestRunStreamingOnUsage(t *testing.T) {
 	for _, u := range usages {
 		if u.PromptTokens != 11 || u.CompletionTokens != 7 || u.TotalTokens != 18 {
 			t.Fatalf("用量数值不符: %+v", u)
+		}
+	}
+}
+
+// TestRunStreamingUsageDuration 流式用量通道的耗时字段（v0.10.5）：每轮 OnUsage
+// 必须带上本轮的墙钟耗时——消费方据此把「本轮 LLM 调用耗时」记成实测值而不是恒 0，
+// 且能区分「零耗时」与「没采到耗时」（0 = 未采集）。
+//
+// 断言用 mock 注入的帧间隔（chunkDelayMS）作下界：真实网关逐 token 产出，帧间隔
+// 即生成耗时，测量点（模型流交付 → 收流 concat 完成）必然覆盖它——若测量点被改坏
+// 或链路静默退化（耗时恒 0），本用例会红。
+func TestRunStreamingUsageDuration(t *testing.T) {
+	const chunkDelayMS = 120
+	_, cm := newMockOpenAI(t,
+		mockResponse{reasoning: "想一想", toolCall: &mockToolCall{id: "c1", name: "echo", arguments: `{"text":"hi"}`}, chunkDelayMS: chunkDelayMS},
+		mockResponse{content: "结论", chunkDelayMS: chunkDelayMS},
+	)
+	var usages []Usage
+	out, err := Run(context.Background(), Config{
+		Name: "test", Instruction: "inst", Model: cm,
+		Tools:   []tool.BaseTool{newEchoTool(t)},
+		OnUsage: func(_ context.Context, u Usage) { usages = append(usages, u) },
+	}, "问", WithOnEvent(func(Event) {}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "结论" {
+		t.Fatalf("out = %q", out)
+	}
+	if len(usages) != 2 {
+		t.Fatalf("两轮应恰两次 OnUsage: %+v", usages)
+	}
+	for i, u := range usages {
+		if u.DurationMS <= 0 {
+			t.Fatalf("第 %d 轮用量缺耗时（恒 0 ⇒ 消费侧无法区分零耗时与未采集）: %+v", i+1, u)
+		}
+		if u.DurationMS < chunkDelayMS {
+			t.Fatalf("第 %d 轮耗时 %dms 小于注入的生成耗时 %dms（测量点未覆盖生成窗口）: %+v",
+				i+1, u.DurationMS, chunkDelayMS, u)
 		}
 	}
 }
