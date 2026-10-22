@@ -94,6 +94,16 @@ type Usage struct {
 	ReasoningTokens  int
 	TotalTokens      int
 	FinishReason     string
+	// DurationMS 本轮 LLM 调用的墙钟耗时（毫秒）——流式路径自模型流交付
+	// （拿到本轮 ResponseMeta 的流）到收流 concat 完成的时长，口径与
+	// llm.UsageRecord.DurationMS 同义（time.Since(start).Milliseconds()）。
+	//
+	// 0 = 未采集。消费方据此区分「零耗时」与「没采到耗时」——字段缺失时两者
+	// 不可区分（消费侧只能记 0，看板上表现为「数据全 0」，比没有数据更坏）。
+	//
+	// 口径边界：起点是模型流交付时刻，**不含**「请求发出到首帧到达」的排队
+	// 与首字延迟（TTFB）；终点是末帧收齐并 concat 完成的时刻。
+	DurationMS int64
 }
 
 // Event agent 运行过程事件（OnEvent 回调载荷，观测/进度展示用）。
@@ -370,10 +380,13 @@ func (h *reactHandler) handle(mv *adk.MessageVariant) error {
 	// 流式消息：先消费分片流发增量事件（真流式观测面），收流后以完整消息走下方
 	// 既有派发逻辑——tool_calls 派发/终稿判定/最终文本事件语义与关流时完全一致。
 	if mv.IsStreaming && mv.MessageStream != nil {
+		// 起点：本轮模型流交付时刻（拿到流即计）。终点在收流 concat 完成后取。
+		start := time.Now()
 		full, err := h.streamDeltas(mv)
 		if err != nil {
 			return err
 		}
+		durationMS := time.Since(start).Milliseconds()
 		mv.Message = full
 		mv.IsStreaming = false
 		mv.MessageStream = nil
@@ -388,6 +401,7 @@ func (h *reactHandler) handle(mv *adk.MessageVariant) error {
 				ReasoningTokens:  u.CompletionTokensDetails.ReasoningTokens,
 				TotalTokens:      u.TotalTokens,
 				FinishReason:     full.ResponseMeta.FinishReason,
+				DurationMS:       durationMS,
 			})
 		}
 	}
