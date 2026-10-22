@@ -2,6 +2,36 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.10.5] — 2026-10-22
+
+### 修复(agentrun)：Usage 补 DurationMS —— 流式用量通道的耗时不再恒 0
+
+agentrun.Usage 缺 duration 字段 ⇒ 消费方只能把本轮 LLM 调用耗时记成 0，
+且「零耗时」与「没采到耗时」不可区分（面板上表现为「有数但全 0」，比没数据更坏）。
+* Usage 新增 DurationMS int64 —— 与 llm.UsageRecord.DurationMS 同型，宿主映射闭包直接赋值
+* 测量点：模型流交付 → 收流 concat 完成（生成窗口）；0 = 未采集
+* 口径边界写进 godoc：不含「请求发出 → 首帧到达」的排队与首字延迟（TTFB）
+测试：新增 TestRunStreamingUsageDuration —— mock 注入帧间隔（生成耗时），
+断言每轮 DurationMS > 0 且 >= 注入的生成耗时；反证样本已验
+（测量点改成恒 0 ⇒ 用例变红，还原 ⇒ 转绿）。
+取舍：不用 eino callbacks 的 OnStart 起点 —— cfg.Model 由调用方构造、ADK 无
+callbacks 注入点，llm 侧 NewUsageHandler 的起点写在模型调用的 ctx 里、在
+agentrun 回填点不可见；要拿到它就得包一层模型（降级 ToolCallingChatModel
+接口 + 模型调用与用量事件需 FIFO 对齐），代价大于收益。
+本地：gofmt -l（空）/ go vet / go build ./... / go test -race -count=1 ./... 全过。
+
+- 杂务(deps)：依赖地板跟到发版时刻的最新——oekit/pkg v0.21.0 / oekit/concurrency v0.20.0
+
+打 tag 时刻的依赖地板必须是当时的最新（matrix-tools 的 verify_tag_floor 判据）。
+agent 不直接 import 这两个模块（均为间接依赖），上游改动纯增量：
+* oekit/pkg v0.20.0 -> v0.21.0：新增 pathx/filename.go（+243）与测试，无既有行为改动
+* oekit/concurrency v0.19.0 -> v0.20.0：新增 syncx/gate.go（+49）与测试，
+  既有文件仅 syncx/syncx.go 的包注释 1 行改写
+⇒ 本仓行为零差异。
+本地：gofmt -l（空）/ go vet / go build ./... / go test -race -count=1 ./... 全过 /
+go mod tidy -diff（空）。
+
+
 ## [v0.10.4] — 2026-10-21
 
 - 杂务(deps)：依赖地板跟到矩阵本轮新版本——llm v0.15.2
