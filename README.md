@@ -10,7 +10,7 @@ go get github.com/oagentkit/agent
 |---|---|
 | `agentrun` | ReAct 运行样板与计划先行（PlanAndExecute）编排 |
 | `reflection` | 反思循环 |
-| `router` | 显式意图路由 |
+| `router` | 显式意图路由（三种执行体：词面 → **决策面**（System One 等非自回归判定模型，毫秒级）→ LLM 面（生成）） |
 | `blackboard` | 无中心多专家协作黑板 |
 | `dispatch` | 通用派发守卫：allow 矩阵 + 深度上限 + 自派发拒绝 |
 | `clarify` | 澄清与标准化词表内核 |

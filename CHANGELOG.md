@@ -2,6 +2,34 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.10.6] — 2026-10-23
+
+### 新增(router)：新增决策面 —— System One 等非自回归判定模型可先于 LLM 分类
+
+router 此前只有一条分类执行体：LLM（自回归生成）。但「把输入路由到有限候选集」本身
+不需要生成——它是非自回归判定模型（System One 协议：Jev/Laya/Kev/Clef/CLM）的主场：
+一次前向 pass 答完全部问题，输出有限标签 + 概率分布 + 校准置信度，毫秒级、几乎免费。
+⇒ router 有了三种执行体：词面（确定性 KeywordHit）→ 决策面（判定，毫秒级）→ LLM 面
+（生成，秒级）。决策面比词面能理解语义，比 LLM 面快且便宜。
+- DecisionFace 窄接口：实现方负责把候选集/槽位规格映射成判定题，并按自己的口径
+  返回校准置信度；本包只管编排语义（不直连客户端实现，遵循「编排层不得直连底层
+  实现」的仓纪律，且本仓不新增仓依赖边）。
+- Config 新增 DecisionFace / DecisionMinConfidence / DecisionShadow /
+  DecisionObserver；Decision 新增 Source（llm | decision，零值即 llm，向后兼容）。
+- 编排：决策面先于 LLM 面；达门槛即采纳（省一次 LLM 分类调用），未达门槛/端点故障
+  ⇒ 回落 LLM 面（fail-open：判定面是加速件，不得阻断主链）。
+- 影子模式：调用决策面但只记不采（结果进 DecisionObserver，行为面零变更）——上线前
+  量一致率与延迟的标准姿势。
+- 自守恒：决策面给的路由名不在表内 ⇒ 拒（回落）；槽位只保留本包配置过的槽位名
+  （防幻觉槽位名透传）；置信度越界钳位到 [0,1]。
+取舍：决策面先行而非 LLM 先行——判定模型的输出可校准（概率分布算出的置信度），
+而 LLM 的自评置信度不可靠；代价是「判定面自信但判错」时 LLM 无机会纠正 ⇒ 用影子
+模式先量一致率、门槛随候选集标定来兜。门槛口径提示：判定置信度随候选集规模变化，
+不可跨候选集移植。
+门禁：gofmt -l（空）/ go vet / go build ./... / go test -race -count=1 ./... 全过
+（router 新增 7 条用例）。
+
+
 ## [v0.10.5] — 2026-10-22
 
 ### 修复(agentrun)：Usage 补 DurationMS —— 流式用量通道的耗时不再恒 0
