@@ -51,6 +51,24 @@ type Config struct {
 	Fallback func(ctx context.Context, input string, reason string) (string, error)
 	// Slots 意图槽位（nil = 纯选路：提示词与解析保持原样，模型多给的 slots 一律丢弃）。
 	Slots []SlotSpec
+
+	// DecisionFace 决策面（System One 等非自回归判定模型；nil = 不启用）。
+	//
+	// 启用后**先问决策面**：达门槛即采纳（省一次 LLM 分类调用）；未达门槛 / 端点
+	// 故障 ⇒ 回落 LLM 面（fail-open：判定面是加速件，不得阻断主链）。
+	// 不启用时行为与从前**逐字节一致**。
+	DecisionFace DecisionFace
+	// DecisionMinConfidence 决策面置信门槛（0 = 不设；0-1）。未达门槛 ⇒ 回落 LLM 面。
+	//
+	// 注意口径**随候选集规模变化**（判定模型的置信度是分布集中度：候选越多、同一
+	// p_top 折出的置信度越低）⇒ 门槛须随候选集标定，不能跨候选集移植。
+	DecisionMinConfidence float64
+	// DecisionShadow 影子模式：调用决策面但**只记不采**（结果进 DecisionObserver，
+	// 行为面零变更）——上线前量一致率与延迟的标准姿势。
+	DecisionShadow bool
+	// DecisionObserver 决策面结果观察钩子（nil = 不观察）。每次决策面调用后回调一次
+	// （采纳时 err=nil；未过门槛/故障时 err 非 nil；影子模式时 err=影子标记）。
+	DecisionObserver DecisionObserver
 }
 
 // Decision 分类决策（可观测）。
@@ -60,17 +78,24 @@ type Decision struct {
 	Reason     string  `json:"reason"`
 	// Slots 槽位提取结果（仅含已配置槽位；未配置/模型未给 = nil）。
 	Slots map[string]string `json:"slots,omitempty"`
+	// Source 判定来源：llm（**零值即 llm**，向后兼容既有消费方）| decision
+	// （决策面，System One 等非自回归判定模型）。
+	Source string `json:"source,omitempty"`
 }
 
 // Router 路由器（构建后只读，并发安全）。
 type Router struct {
-	client     *llm.Client
-	routes     []Route
-	byName     map[string]Route
-	slots      []SlotSpec
-	slotByName map[string]bool
-	minCF      float64
-	fb         func(ctx context.Context, input string, reason string) (string, error)
+	client      *llm.Client
+	routes      []Route
+	byName      map[string]Route
+	slots       []SlotSpec
+	slotByName  map[string]bool
+	minCF       float64
+	fb          func(ctx context.Context, input string, reason string) (string, error)
+	decFace     DecisionFace
+	decMinCF    float64
+	decShadow   bool
+	decObserver DecisionObserver
 }
 
 // New 创建路由器。
@@ -105,13 +130,17 @@ func New(cfg *Config) (*Router, error) {
 		slotByName[s.Name] = true
 	}
 	return &Router{
-		client:     llm.NewClient(cfg.Model, cfg.ModelName, nil),
-		routes:     cfg.Routes,
-		byName:     byName,
-		slots:      cfg.Slots,
-		slotByName: slotByName,
-		minCF:      cfg.MinConfidence,
-		fb:         cfg.Fallback,
+		client:      llm.NewClient(cfg.Model, cfg.ModelName, nil),
+		routes:      cfg.Routes,
+		byName:      byName,
+		slots:       cfg.Slots,
+		slotByName:  slotByName,
+		minCF:       cfg.MinConfidence,
+		fb:          cfg.Fallback,
+		decFace:     cfg.DecisionFace,
+		decMinCF:    cfg.DecisionMinConfidence,
+		decShadow:   cfg.DecisionShadow,
+		decObserver: cfg.DecisionObserver,
 	}, nil
 }
 
@@ -122,6 +151,22 @@ func New(cfg *Config) (*Router, error) {
 // 配置了 Slots 时同一调用顺带提取槽位（提示词追加槽位说明；模型未给的槽位不出现在结果里，
 // 未配置的槽位名一律丢弃——槽位提取失败不影响选路本身）。
 func (r *Router) Classify(ctx context.Context, input string) (Decision, error) {
+	// 决策面优先（System One 等非自回归判定模型）：达门槛即采纳——省一次 LLM 分类
+	// 调用；未达门槛 / 端点故障 / 影子模式 ⇒ 回落下面的 LLM 面（fail-open：
+	// 判定面是加速件，**不得阻断主链**）。
+	if r.decFace != nil {
+		d, derr := r.classifyByDecisionFace(ctx, input)
+		if derr == nil && !r.decShadow {
+			r.observeDecision(d, nil)
+			return d, nil
+		}
+		if derr == nil {
+			// 影子模式：结果只进观察钩子，**不采纳**（行为面零变更）。
+			derr = errDecisionShadow
+		}
+		r.observeDecision(d, derr)
+	}
+
 	var b strings.Builder
 	b.WriteString("把用户输入路由到最合适的处理类别。\n\n可用类别：\n")
 	for _, rt := range r.routes {
@@ -146,6 +191,7 @@ func (r *Router) Classify(ctx context.Context, input string) (Decision, error) {
 	if err != nil {
 		return Decision{}, fmt.Errorf("router: 分类失败: %w", err)
 	}
+	d.Source = SourceLLM
 	d.Route = strings.ToLower(strings.TrimSpace(d.Route))
 	d.Confidence = clamp01(d.Confidence) // LLM 幻觉防护：越界置信度统一钳位
 	d.Slots = sanitizeSlots(d.Slots, r.slotByName)
