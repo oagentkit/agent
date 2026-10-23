@@ -2,6 +2,35 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.11.0] — 2026-10-23
+
+- 杂务(deps)：依赖地板抬到 llm v0.17.1 / oekit/concurrency v0.20.2
+
+抬 go.mod 的依赖地板，跟到本轮新版本：
+- github.com/oagentkit/llm        v0.16.0 -> v0.17.1
+- github.com/oekit/concurrency    v0.20.1 -> v0.20.2
+本仓自身代码零改动，只改 go.mod / go.sum。
+下游要做什么：**go mod tidy**——地板抬高对下游是**隐式破坏性变更**：
+不跑就报 updates to go.mod needed，且报错不提真正原因。
+为什么抬：本仓 tip（b91c82f，2026-10-22T22:19:17Z）的地板还钉在 llm v0.16.0 /
+concurrency v0.20.1，而 llm 最新已是 v0.17.1（发布于 2026-10-23T07:58:26Z）、
+基座 concurrency 最新已是 v0.20.2（发布于 2026-10-23T03:09:14Z）——**都比 tip 晚**。
+矩阵的「发版时刻地板时效」门禁（verify_tag_floor.py --org oagentkit，默认 HEAD 口径）
+此刻还绿，**只因 tip 的提交时刻早于这两个发布时刻**；用门禁自己的 check_ref() 复现
+（同一份 go.mod、同一批 tag，只把 ref 时刻推进到现在）即刻报红：
+llm 地板 v0.16.0 应为 v0.17.1、concurrency 地板 v0.20.1 应为 v0.20.2。
+⇒ 下一次 push 到本仓就会把这条判据打红，而下一次打 tag 就会把落后地板发出去；
+tag 受 protect-tags 保护不可重打（重打会让下游 go.sum 的 h1 对不上 ⇒ checksum mismatch）。
+为什么无行为差异：llm v0.16.0 -> v0.17.1 的 diff 是**纯加法**——client.go 新增
+Client.OnUsageDetailed 与 UsageRecord.CachedTokens（不碰 OnUsage 旧签名、不改 CostOf
+计价口径），decision/ 与 port/ 是新包（本仓不 import）；本仓唯一 import 的 llm 根包
+编译与测试在 v0.17.1 下全绿。concurrency v0.20.1 -> v0.20.2 的 diff 只动了 syncx/
+（KeyedGate 的 release 幂等标记从裸 bool 改成 atomic CAS、新增 Gate.TryAcquire）
+与它自己的 go.mod，而本仓只 import concurrency/async，一字未动。
+门禁：go build / vet / test -race 通过，gofmt -l 空，go mod tidy -diff 空。
+Closes #28
+
+
 ## [v0.10.6] — 2026-10-23
 
 ### 新增(router)：新增决策面 —— System One 等非自回归判定模型可先于 LLM 分类
@@ -30,7 +59,6 @@ router 此前只有一条分类执行体：LLM（自回归生成）。但「把�
 （router 新增 7 条用例）。
 
 - 杂务(deps)：依赖地板跟到发版时刻的最新——oagentkit/llm v0.16.0（决策面客户端落地）/ oekit/concurrency v0.20.1 / oekit/pkg v0.22.0
-
 
 ## [v0.10.5] — 2026-10-22
 
