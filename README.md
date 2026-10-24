@@ -24,6 +24,8 @@ go get github.com/oagentkit/agent
 ## 外部依赖地板
 
 - `github.com/cloudwego/eino`
+- `github.com/cloudwego/eino-ext/components/model/openai`
+- `gopkg.in/yaml.v3`
 
 ## 与 oekit 的关系
 
