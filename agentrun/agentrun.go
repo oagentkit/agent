@@ -54,6 +54,34 @@ type Config struct {
 	// 有状态包装时，复用同一实例会让限流计数跨重试累计（重试继承 0 余额，
 	// 每次调用立即被拒）。工厂内每次重新包装即可让预算按尝试重置。
 	ToolsFactory func() []tool.BaseTool
+	// ToolAliases 工具**名别名**表（可选）：键=工具的规范名（即工具表里
+	// `tool.Info().Name` 的值，MCP 场景为 `server.工具名`），值=别名配置。
+	// 模型用别名调用时会被解析回规范名，两种写法都命中。
+	//
+	// 为什么需要（实测 2026-10-30，扁鹊生产实弹 215）：MCP 工具的暴露名带
+	// server 命名空间（`ask-ops.run_readonly_commands`），而模型常按直觉发
+	// **裸名**（`run_readonly_commands`）⇒ eino ToolsNode 直接报
+	// `tool ... not found in toolsNode indexes`，该步骤**整步失败**
+	// （事件错误向上抛、链路降级；变更类工具已执行时连整步重试都被跳过）。
+	// 下游把裸名注册成别名 ⇒ 不必依赖模型自我纠正。
+	//
+	// 注意：别名若与**另一个工具的规范名或已注册别名**冲突，eino 侧
+	// `applyAliasConfigs` 会让整个 ToolsNode 构造失败 ⇒ 装配期就要避免
+	// （同名裸名来自两个 server 时只能择一，或改用 UnknownToolsHandler 兜底）。
+	// nil/空=零行为（存量路径不变，eino 侧 aliasConfigs==nil 时跳过）。
+	ToolAliases map[string]compose.ToolAliasConfig
+	// UnknownToolsHandler **幻觉工具兜底**（可选）：模型调用了工具表里
+	// 不存在的工具时，由本处理器接管而不是让 eino 报错。返回的字符串会
+	// 作为该次工具调用的结果回给模型，返回 error 则该步失败。
+	//
+	// 与 ToolAliases 的分工：别名解决**已知**的写法差异（首选——两种写法
+	// 都命中，模型不必自我纠正）；兜底解决**未知**的幻觉（模型编了个工具名），
+	// 让它拿到一句可解释的观察而不是整步失败。
+	//
+	// 签名与 eino `compose.ToolsNodeConfig.UnknownToolsHandler` 一致：
+	// name=模型请求的工具名，input=该次调用的参数原文（JSON 字符串）。
+	// nil/空=零行为（存量路径不变：eino 侧未设时直接报错）。
+	UnknownToolsHandler func(ctx context.Context, name, input string) (string, error)
 	// MaxIterations ReAct 循环轮数上限（默认 12）。
 	MaxIterations int
 	// RetryAfterMutation 变更类工具已执行后仍允许整体重试（默认 false=守卫生效：
@@ -270,7 +298,11 @@ func run(ctx context.Context, cfg Config, query string, onEvent func(Event)) (st
 		Model:         cfg.Model,
 		MaxIterations: cfg.maxIterations(),
 		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools},
+			ToolsNodeConfig: compose.ToolsNodeConfig{
+				Tools:               tools,
+				ToolAliases:         cfg.ToolAliases,
+				UnknownToolsHandler: cfg.UnknownToolsHandler,
+			},
 		},
 	})
 	if err != nil {

@@ -35,6 +35,17 @@ type PlanExecuteConfig struct {
 	Executor model.ToolCallingChatModel
 	// Tools 执行器可用工具（nil = 纯推理执行）。
 	Tools []tool.BaseTool
+	// ToolAliases 工具**名别名**表（可选）：语义同 Config.ToolAliases——
+	// 键=规范名（`tool.Info().Name`，MCP 场景为 `server.工具名`），
+	// 值=别名配置；模型用别名调用时解析回规范名。
+	// MCP 暴露名带 server 命名空间、模型常发裸名 ⇒ 不注册别名则该步整步失败
+	// （eino 报 `tool ... not found in toolsNode indexes`）。
+	// nil/空=零行为（存量路径不变）。
+	ToolAliases map[string]compose.ToolAliasConfig
+	// UnknownToolsHandler 幻觉工具兜底（可选）：语义同 Config.UnknownToolsHandler——
+	// 模型调用不存在的工具时由它接管，返回的字符串作为该次调用的结果回给模型。
+	// nil/空=零行为（存量路径不变：eino 侧未设时直接报错）。
+	UnknownToolsHandler func(ctx context.Context, name, input string) (string, error)
 	// MaxSteps "执行-重规划"循环上限（默认 10）。
 	MaxSteps int
 	// PlannerInstruction 追加给规划器的约束/背景（可空；经输入整形注入，
@@ -108,7 +119,11 @@ func buildPlanExecute(ctx context.Context, cfg PlanExecuteConfig, maxSteps int) 
 	executor, err := planexecute.NewExecutor(ctx, &planexecute.ExecutorConfig{
 		Model: cfg.Executor,
 		ToolsConfig: adk.ToolsConfig{
-			ToolsNodeConfig: compose.ToolsNodeConfig{Tools: cfg.Tools},
+			ToolsNodeConfig: compose.ToolsNodeConfig{
+				Tools:               cfg.Tools,
+				ToolAliases:         cfg.ToolAliases,
+				UnknownToolsHandler: cfg.UnknownToolsHandler,
+			},
 		},
 	})
 	if err != nil {
