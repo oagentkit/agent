@@ -2,6 +2,141 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.12.0] — 2026-10-30
+
+### 新增(agentrun)：暴露 ToolsNodeConfig.ToolAliases / UnknownToolsHandler
+
+## 问题
+模型调用工具时若用**裸名**（`run_readonly_commands`），而工具在 ToolsNode 索引里的键是
+**带 server 前缀的暴露名**（`ask-ops.run_readonly_commands`），eino 直接报：
+```
+[NodeRunError] tool run_readonly_commands not found in toolsNode indexes
+```
+该步骤**整步失败**（agentrun 事件错误向上抛、链路降级）；变更类工具已执行时
+连整步重试都会被跳过 ⇒ 一条链少一环结论。
+（issue agent#36；实测 2026-10-30 扁鹊生产实弹 215。）
+## 根因
+`agentrun/agentrun.go` 与 `agentrun/planexecute.go` 两处 ToolsNode 硬编码：
+```go
+ToolsNodeConfig: compose.ToolsNodeConfig{Tools: tools},
+```
+⇒ 下游无法注入 eino 已有的两个正解。
+## 方案
+在 `Config` 与 `PlanExecuteConfig` 上**同时**暴露两个能力（两者互补，不是二选一）：
+```go
+// ToolAliases 工具名别名表（可选）：键=规范名（tool.Info().Name，MCP 场景为 server.工具名）
+ToolAliases map[string]compose.ToolAliasConfig
+// UnknownToolsHandler 幻觉工具兜底（可选）：签名与 eino 一致
+UnknownToolsHandler func(ctx context.Context, name, input string) (string, error)
+```
+- **ToolAliases** 解决**已知**的写法差异 ⇒ 两种写法都命中，模型不必自我纠正（首选）；
+- **UnknownToolsHandler** 解决**未知**的幻觉 ⇒ 模型编了个工具名时拿到可解释观察而非整步失败。
+两处都接到 `compose.ToolsNodeConfig`：`agentrun.go` 的 ReAct 路径与 `planexecute.go` 的
+Executor 路径——后者有独立的 `Tools` 字段与独立的构造点，只改一处会漏。
+### 为什么本仓不自动推导裸名别名
+本仓是**编排层**，不拥有 `server.工具名` 的命名约定——那是 mcpkit 的契约
+（`mcp/catalog.go`：`info.Name` = 暴露名、`wireName` = 真实调用名）。
+本仓拿不到「哪个前缀是 server 名」的知识 ⇒ 自动推导会变成猜。
+故本仓的职责是**暴露能力**，由知道 server 命名的下游显式注册。
+### 一处与 issue 原文的更正
+issue 里方案 B 的签名写作
+`func(ctx context.Context, toolName string, args map[string]any) (string, error)`，
+而 eino v0.9.21 的真实签名是
+`func(ctx context.Context, name, input string) (string, error)`
+—— `name` 与 `input` **都是 string**（input 是参数原文 JSON，不是 map）。
+按 issue 原文的签名实现会编译不过。此处按 eino 真实签名暴露。
+## 兼容性
+纯增量：默认 nil ⇒ 行为与现在完全一致
+（eino 侧 `aliasConfigs == nil` 时跳过；`unknownToolHandler == nil` 时直接报错）。
+⚠️ 装配期需注意：别名若与**另一个工具的规范名或已注册别名**冲突，
+eino 的 `applyAliasConfigs` 会让整个 ToolsNode 构造失败
+⇒ 同名裸名来自两个 server 时只能择一，或改用 `UnknownToolsHandler` 兜底。
+## 验证
+- `go build ./...` / `go vet ./...` / `gofmt -l` / `go mod tidy -diff` 全绿
+- `go test ./...` 全绿；`go test -race ./...` 全绿
+- 新增 5 个用例：
+  - `TestRunToolAliasesResolveBareName` —— 模型发**裸名**、规范名带 `srv.` 前缀 ⇒ 别名命中、该步不失败
+  - `TestRunWithoutToolAliasesUnknownToolFails` —— 未注册别名 ⇒ **保持原行为**（整步失败，钉住「nil = 零行为」）
+  - `TestRunUnknownToolsHandler` —— 模型调不存在的工具 ⇒ 处理器被调 1 次、收到正确 name/input、该步不失败
+  - `TestRunUnknownToolsHandlerError` —— 处理器返回 error ⇒ 该步仍失败（处理器是缝，不是吞一切的洞）
+  - `TestPlanExecuteToolAliases` —— plan-execute 链路的 Executor 同样支持别名
+- **变异验证**：把接线退回 `compose.ToolsNodeConfig{Tools: tools}`
+  ⇒ 用例必须转红（实测报 `[NodeRunError] tool 不存在的工具 not found in toolsNode indexes`）
+## 发版
+本仓是发布件：本次发 **v0.12.0**（新增公共 API ⇒ minor 版本）。
+按 org CONTRIBUTING 顺序：特性 PR 合入 main → 预写 CHANGELOG → 打 annotated tag。
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+- 杂务(deps)：依赖地板追到最新——github.com/oekit/concurrency v0.23.2
+
+| 依赖 | 现地板 | 抬到 |
+|---|---|---|
+| `github.com/oekit/concurrency` | `v0.23.1` | `v0.23.2` |
+## 为什么
+矩阵的**发版时刻地板时效**门禁（`verify_tag_floor --ref HEAD`）要求：各仓 HEAD
+（= 下次发版会发出去的内容）的依赖地板，相对那一刻的依赖最新版本，不能已落后。
+oekit 基座与矩阵模块都在高频发版 ⇒ 地板是**跑步机**，落后一格就会判红。
+## 兼容性实测
+本工具在提交前跑完 `go build` / `go vet` / `go test -race -count=1 ./...`（全绿才提交）
+与 `go mod tidy -diff`（无漂移）⇒ 改动**只影响依赖版本**，零行为差异。
+只改 `go.mod` / `go.sum` ⇒ 不需要 CHANGELOG 条目（版本段由下次发版的 `prewrite` 生成）。
+
+- 杂务(deps)：依赖地板追到最新——github.com/oekit/concurrency v0.23.1
+
+oekit 基座又发了一版（`concurrency` v0.23.1，2026-10-29 02:19 CST）⇒ 上一轮抬到
+v0.23.0 的地板已经落后 ⇒ 再抬一格。
+本仓只用到 `concurrency` 的少量 API ⇒ 实测 go build / go vet / go test -race 全绿，
+**零行为差异**；go 指令未被顶起。
+只改 go.mod / go.sum ⇒ 不需要 CHANGELOG 条目（版本段由下次发版的 `prewrite` 生成）。
+
+- 杂务(deps)：依赖地板追到最新——github.com/oekit/concurrency v0.23.0 github.com/oekit/logx v0.8.0 github.com/oekit/pkg v0.31.0
+
+oekit 基座发了新版本（pkg v0.31.0 / concurrency v0.23.0 / logx v0.8.0）⇒ 本仓的
+依赖地板落后 ⇒ 抬到最新，让**下一次发版**不再带出落后地板（打 tag 时刻的地板
+必须是当时的最新——`verify_tag_floor` / `release.py doctor` 都在查这条）。
+兼容性实测：本仓只用这些基座包的少量 API ⇒ go build / go vet / go test -race
+全绿，**零行为差异**；go 指令未被顶起（本仓的 go 地板不动）。
+
+- 杂务(deps)：依赖地板追平上游本轮新版本——github.com/oagentkit/llm@v0.18.1、github.com/oagentkit/textx@v0.7.1、github.com/oekit/concurrency@v0.22.0、github.com/oekit/pkg@v0.28.0
+
+本仓 HEAD 的依赖地板已落后于各依赖的最新版本（`verify_tag_floor.py --org oagentkit --ref HEAD` 判红）。
+本仓一旦发版，就会把落后地板发出去——而 tag 受 protect-tags ruleset 保护、打完不能重打，
+只能靠后续版本补齐。
+本版只抬依赖地板，不改任何行为：
+- github.com/oagentkit/llm → v0.18.1
+- github.com/oagentkit/textx → v0.7.1
+- github.com/oekit/concurrency → v0.22.0
+- github.com/oekit/pkg → v0.28.0
+对应 issue matrix-tools#143。
+
+
+- 文档(agent)：刷正 README 的外部依赖清单 —— 与 go.mod 实测对账
+
+本仓 README 的「外部依赖」清单与**各仓 go.mod 的事实**对不上。
+矩阵的单一数据源 `matrix-tools/modules.json` 也有同样漂移，已在
+[matrix-tools#126](https://github.com/oagentkit/matrix-tools/pull/126) 同步刷正。
+## 现状核实
+```bash
+$ grep -v indirect agent/go.mod | grep -E "^\s+[a-z].*/"
+	github.com/cloudwego/eino v0.9.21
+	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
+	github.com/oagentkit/llm v0.17.1
+	github.com/oagentkit/textx v0.6.2
+	gopkg.in/yaml.v3 v3.0.1
+```
+⇒ 第三方直接依赖是 **3 个**（eino、**eino-ext/components/model/openai**、**yaml.v3**），
+本仓 README 只列了 1 个。
+## 影响
+`eino-ext/components/model/openai` 是重量级地板（拉 sonic 等）；漏列 ⇒ 读者低估依赖面。
+## 改动
+**只改清单那一行（`- `github.com/cloudwego/eino`` ⇒ 多两行 `- `github.com/cloudwego/eino-ext/components/model/openai`` 与 `- `gopkg.in/yaml.v3``）**，其余段落逐字未动。
+## 验收
+- [x] 清单与 `go.mod` 实测一致
+- [x] 与 `matrix-tools/modules.json` 的登记一致（同期在 matrix-tools#126 刷正）
+- [x] **纯 .md 改动** ⇒ 不需要 CHANGELOG 条目、不打 tag、不发版（无发版步骤）
+关联 oagentkit/matrix-tools#125
+
+
 ## [v0.11.0] — 2026-10-23
 
 - 杂务(deps)：依赖地板抬到 llm v0.17.1 / oekit/concurrency v0.20.2
