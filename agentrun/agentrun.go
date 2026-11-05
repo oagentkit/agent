@@ -518,7 +518,13 @@ func (h *reactHandler) streamDeltas(mv *adk.MessageVariant) (*schema.Message, er
 		}
 	}
 	if len(chunks) == 0 {
-		return &schema.Message{Role: mv.Role}, nil
+		// 零分片成因区分（oagentkit/agent#46）：Recv 循环只在 err!=nil 时提前
+		// 返回——走到这里说明流是**干净 EOF 即断**（连接开即断/网关瞬断），
+		// 与「模型真空答复」（有响应帧、内容为空）是两类成因。瞬断此前被
+		// 合并成空成功形态，下游据「空内容」触发整程重试重放工具采集——
+		// 传输故障被放大成完整重放。此处显式上抛走生成重试；真空答复
+		// （有分片但内容空）仍走下方合并形态。
+		return nil, fmt.Errorf("agentrun: 流式读取零分片（传输/网关侧断流，非模型空答复）")
 	}
 	full, err := schema.ConcatMessages(chunks)
 	if err != nil {
