@@ -196,3 +196,34 @@ func TestRunWithRetryReadOnlyRetries(t *testing.T) {
 		t.Fatalf("无变更类工具应照常重试: %v %q", err, out)
 	}
 }
+
+// MutabilityClassifier 显式判定整体接管（agent#45）：run_readonly_commands 命中
+// "run" 动词段被启发式误判（bianque 两轮生产实弹）——显式通道下按注解读真值，
+// 优先于启发式与豁免集。
+func TestMutabilityClassifierOverrides(t *testing.T) {
+	// 启发式基线：误判复现（钉住问题本身）
+	if !IsMutatingTool("run_readonly_commands") {
+		t.Fatal("启发式误判基线：run_readonly_commands 应命中 run 段（问题复现）")
+	}
+	// classifier 整体接管：只读执行器判只读
+	tr := SideEffectTracker{
+		classifier: func(name string) bool { return name == "shell_exec" },
+	}
+	tr.Observe(Event{Type: EventToolCall, Tool: "run_readonly_commands"})
+	if tr.MutatingTool() != "" {
+		t.Fatalf("classifier 判只读不得计变更类: %q", tr.MutatingTool())
+	}
+	tr.Observe(Event{Type: EventToolCall, Tool: "shell_exec"})
+	if tr.MutatingTool() != "shell_exec" {
+		t.Fatalf("classifier 判变更应记录: %q", tr.MutatingTool())
+	}
+	// 接管语义：豁免集在 classifier 模式下不再参与（判定单源）
+	tr2 := SideEffectTracker{
+		exempt:     map[string]bool{"shell_exec": true},
+		classifier: func(string) bool { return true },
+	}
+	tr2.Observe(Event{Type: EventToolCall, Tool: "shell_exec"})
+	if tr2.MutatingTool() != "shell_exec" {
+		t.Fatal("classifier 非 nil 时整体接管（豁免集不参与）")
+	}
+}

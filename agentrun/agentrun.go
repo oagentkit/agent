@@ -95,6 +95,12 @@ type Config struct {
 	// 与 RetryAfterMutation 正交：豁免集修正「哪些调用算变更」的判定输入，
 	// RetryAfterMutation 决定「已判定变更后是否仍重试」。nil/空=零行为（纯启发式）。
 	NonMutatingTools map[string]bool
+	// MutabilityClassifier 显式变更性判定（nil=不启用）：非空时**整体接管**
+	// IsMutatingTool 启发式与 NonMutatingTools 豁免集——返回 true 计变更类。
+	// 动词段启发式对 run_readonly_commands 类命名误判（bianque 两轮生产实弹，
+	// oagentkit/agent#45），数据单源的消费方（如 mcpkit Pool.Hints.ReadOnly）
+	// 经此把显式注解喂进来，不再靠名字重猜。
+	MutabilityClassifier func(name string) bool
 	// DisableStreaming 关闭流式（默认 false=开）：开流时思考/正文以 *_delta 增量事件
 	// 外发（真流式观测面），每轮收流后仍按完整消息走既有派发与终稿判定——消费方
 	// 语义不变，只多出增量通道。模型/网关不兼容流式时的逃生开关。
@@ -197,9 +203,10 @@ type runOpts struct {
 }
 
 // WithOnEvent 过程事件回调（可多传，末个生效；nil 回调等价不传）。
-// 契约：回调在事件 drain 循环内同步执行——不得阻塞（阻塞会拖停整轮 agent）、
-// 不得 panic（会击穿调用方 goroutine，与 acpx OnEvent 同契约；事件已固化，
-// 回调内消费失败不影响事件面完整性，自行 recover）。
+// 契约：回调在事件 drain 循环内同步执行——不得阻塞（阻塞会拖停整轮 agent）；
+// **回调 panic 会击穿调用方 goroutine，本包不代为 recover**（与 acpx OnEvent
+// 同契约）——消费方必须自行 recover。事件在回调触发前已固化：回调内的消费
+// 失败不影响事件面完整性，但 panic 例外（见上）。
 func WithOnEvent(fn func(Event)) RunOption {
 	return func(o *runOpts) { o.onEvent = fn }
 }

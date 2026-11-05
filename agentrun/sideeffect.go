@@ -26,6 +26,12 @@ var MutatingVerbs = map[string]bool{
 }
 
 // IsMutatingTool 工具名是否变更类（非幂等）：小写后按下划线分段精确匹配动词表。
+//
+// ⚠️ 启发式边界（oagentkit/agent#45，bianque 两轮生产实弹）：动词段匹配对
+// 「run_readonly_commands」类命名会误判（"run" 段命中）——名字启发式在工具名
+// 自由命名的世界里漏判/误判都是必然的。名字拿不准的域外工具走显式通道：
+//   - Config.NonMutatingTools 豁免集（MCP ReadOnlyHint / curated 白名单为据）；
+//   - Config.MutabilityClassifier 整体接管判定（显式声明优先于一切启发式）。
 func IsMutatingTool(name string) bool {
 	n := strings.ToLower(name)
 	for _, seg := range strings.Split(n, "_") {
@@ -38,11 +44,14 @@ func IsMutatingTool(name string) bool {
 
 // SideEffectTracker 观测一次 agent 运行中是否调用过变更类工具（事件回调包装器，
 // 观测不截断：Wrap 后事件照常透传给原回调）。exempt 为工具名豁免集
-// （Config.NonMutatingTools 注入；零值=无豁免，纯动词启发式）。
+// （Config.NonMutatingTools 注入；零值=无豁免，纯动词启发式）；
+// classifier 非 nil 时整体接管判定（Config.MutabilityClassifier，显式声明
+// 优先于启发式与豁免集——「名字拿不准」的域外工具走声明而非重猜）。
 type SideEffectTracker struct {
-	mu     sync.Mutex
-	called string          // 首个变更类工具名；""=未调用
-	exempt map[string]bool // 豁免集：命中即不计变更类（只读执行器命名误报的校正缝）
+	mu         sync.Mutex
+	called     string                 // 首个变更类工具名；""=未调用
+	exempt     map[string]bool        // 豁免集：命中即不计变更类（只读执行器命名误报的校正缝）
+	classifier func(name string) bool // 显式判定（nil=启发式+豁免集）
 }
 
 // Observe 处理一个运行事件（接 OnEvent 回调）。
@@ -50,10 +59,16 @@ func (t *SideEffectTracker) Observe(ev Event) {
 	if ev.Type != EventToolCall {
 		return
 	}
-	if t.exempt[ev.Tool] || t.exempt[strings.ToLower(ev.Tool)] {
-		return
+	mutating := false
+	if t.classifier != nil {
+		mutating = t.classifier(ev.Tool) // 显式判定整体接管（含豁免语义）
+	} else {
+		if t.exempt[ev.Tool] || t.exempt[strings.ToLower(ev.Tool)] {
+			return
+		}
+		mutating = IsMutatingTool(ev.Tool)
 	}
-	if IsMutatingTool(ev.Tool) {
+	if mutating {
 		t.mu.Lock()
 		if t.called == "" {
 			t.called = ev.Tool
@@ -89,7 +104,7 @@ func (t *SideEffectTracker) MutatingTool() string {
 // runWithMeta run 的内部形态：额外返回首轮运行中首个被调用的变更类工具名
 // （Config.NonMutatingTools 豁免集经 tracker 生效——判定输入校正，守卫语义不变）。
 func runWithMeta(ctx context.Context, cfg Config, query string, onEvent func(Event)) (string, string, error) {
-	tracker := SideEffectTracker{exempt: cfg.NonMutatingTools}
+	tracker := SideEffectTracker{exempt: cfg.NonMutatingTools, classifier: cfg.MutabilityClassifier}
 	out, err := run(ctx, cfg, query, tracker.Wrap(onEvent))
 	return out, tracker.MutatingTool(), err
 }

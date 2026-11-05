@@ -10,6 +10,7 @@
 package clarify
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -52,7 +53,13 @@ func LoadVocab(fsys fs.FS, path string) ([]Entry, error) {
 	var doc struct {
 		TermMap []Entry `yaml:"term_map"`
 	}
-	if err := yaml.Unmarshal(raw, &doc); err != nil {
+	// KnownFields 严格解码（oagentkit/agent#43）：词表文件来自内容资产仓，
+	// 键名手写漂移是常态——terms: 误写成 items:/term: 时宽松解码会静默忽略，
+	// 加载「成功」但注入段缺术语（问答质量慢性下降，无任何信号指向词表）。
+	// 严格模式下拼错键即报错，与「拒绝半份词表静默上线」的既有立场同向。
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec.KnownFields(true)
+	if err := dec.Decode(&doc); err != nil {
 		return nil, fmt.Errorf("clarify: %s 解析: %w", path, err)
 	}
 	return doc.TermMap, nil
@@ -83,6 +90,22 @@ func Validate(entries []Entry) error {
 		}
 		if !e.Vague && e.Clarify != nil {
 			return fmt.Errorf("clarify: term_map %q 非 vague 不得配置 clarify", e.Word)
+		}
+	}
+	return nil
+}
+
+// ValidateTermsStrict 词目术语集的结构性严格检查（opt-in，oagentkit/agent#43）：
+// 非 vague 条目 Terms 为空即报错——「有维度无约束」的静默降级形态（注入段为空，
+// 问答质量慢性下降且无信号）。不并入 Validate：词条只做路由、无术语展示是合法
+// 形态（既有测试钉住的语义）；需要术语注入完备性的宿主在装配期显式调用本函数。
+// 键名拼错（terms: → items:）由 LoadVocab 的 KnownFields 在解析层拦下，本函数
+// 兜的是「合法键但真没写术语」的结构层。
+func ValidateTermsStrict(entries []Entry) error {
+	for i := range entries {
+		e := &entries[i]
+		if !e.Vague && len(e.Terms) == 0 {
+			return fmt.Errorf("clarify: term_map 第 %d 条 %q 维度 %q 无 terms（非 vague 词目须配标准术语集，否则注入段为空）", i+1, e.Word, e.Dimension)
 		}
 	}
 	return nil

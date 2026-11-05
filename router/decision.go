@@ -102,5 +102,10 @@ func (r *Router) observeDecision(d Decision, err error) {
 	if r.decObserver == nil {
 		return
 	}
+	// 兑现注释承诺（oagentkit/agent#42）：DecisionObserver 是宿主指标/统计
+	// 代码，panic（nil map 写、类型断言失败）不得沿 Classify/Run 击穿调用方
+	// goroutine。恢复即静默终结该次观察——观测面故障的定位靠宿主自测，
+	// 主链不受牵连是这里的优先级。
+	defer func() { _ = recover() }()
 	r.decObserver(d, err)
 }

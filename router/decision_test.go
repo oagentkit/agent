@@ -205,3 +205,17 @@ func TestClassifyWithoutDecisionFaceUnchanged(t *testing.T) {
 		t.Errorf("LLM 应被调用一次（实际 %d 次）", llm.Calls)
 	}
 }
+
+// observeDecision 兑现「钩子 panic 不影响主链」（agent#42）：此前裸调，
+// 观察钩子 panic 沿 Classify/Run 击穿调用方 goroutine；现在 recover 兜住。
+func TestObserveDecisionPanicContained(t *testing.T) {
+	r := &Router{decObserver: func(Decision, error) { panic("observer bug") }}
+	r.observeDecision(Decision{}, nil) // 不得 panic 上抛
+	// 正常钩子照常执行
+	called := false
+	r2 := &Router{decObserver: func(Decision, error) { called = true }}
+	r2.observeDecision(Decision{}, nil)
+	if !called {
+		t.Fatal("正常钩子应被调用")
+	}
+}
