@@ -6,7 +6,7 @@ require (
 	github.com/cloudwego/eino v0.9.21
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
 	github.com/oagentkit/llm v0.19.0
-	github.com/oagentkit/textx v0.8.0
+	github.com/oagentkit/textx v0.9.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
