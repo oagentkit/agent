@@ -1,6 +1,8 @@
 package clarify
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"testing/fstest"
 )
@@ -149,5 +151,37 @@ func TestResolveAnswerFallbackTightened(t *testing.T) {
 		if isFb != c.isFallback || ok != c.ok {
 			t.Errorf("%q: isFallback=%v ok=%v（want %v/%v）", c.answer, isFb, ok, c.isFallback, c.ok)
 		}
+	}
+}
+
+// LoadVocab 严格解码（agent#43）：键名拼错（terms: → items:）此前被宽松
+// yaml 静默忽略——加载「成功」但注入段缺术语，无任何信号。KnownFields 下
+// 拼错键即报错。
+func TestLoadVocabStrictKeys(t *testing.T) {
+	dir := t.TempDir()
+	bad := "term_map:\n  - word: 负载\n    dimension: system_load\n    items:\n      - load average\n"
+	if err := os.WriteFile(filepath.Join(dir, "vocab.yaml"), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadVocab(os.DirFS(dir), "vocab.yaml"); err == nil {
+		t.Fatal("拼错键应报错（KnownFields 严格解码）")
+	}
+	good := "term_map:\n  - word: 负载\n    dimension: system_load\n    terms:\n      - load average\n"
+	if err := os.WriteFile(filepath.Join(dir, "good.yaml"), []byte(good), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := LoadVocab(os.DirFS(dir), "good.yaml")
+	if err != nil {
+		t.Fatalf("合法词表不应报错: %v", err)
+	}
+	if len(entries) != 1 || len(entries[0].Terms) != 1 {
+		t.Fatalf("词目解析不符: %+v", entries)
+	}
+	// 结构层严格检查（opt-in）：非 vague 条目无 terms 报错；有 terms 通过
+	if err := ValidateTermsStrict([]Entry{{Word: "磁盘满", Dimension: "disk_space"}}); err == nil {
+		t.Fatal("无 terms 应报错")
+	}
+	if err := ValidateTermsStrict([]Entry{{Word: "磁盘满", Dimension: "disk_space", Terms: []string{"inode"}}}); err != nil {
+		t.Fatalf("有 terms 应通过: %v", err)
 	}
 }
