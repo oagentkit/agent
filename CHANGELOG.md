@@ -2,6 +2,213 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.14.0] — 2026-11-07
+
+### 修复(agentrun)：钉死 MaxIterations 计的是模型调用次数，并让「预算耗尽」可判定（#60）
+
+## 根因
+`Config.MaxIterations` 的注释写「ReAct 循环轮数上限」，实现原样转发给 eino
+`adk.ChatModelAgentConfig.MaxIterations`——而 eino 的语义是 **ChatModel
+generation cycles**：每次模型调用计一次，**含产出终稿的那一次**。
+于是按「循环轮数」直觉填 1 的配置：纯问答能跑通（1 次调用即终稿），但只要模型
+决定调工具，工具轮之后那次出终稿的调用就会被 eino 拒（`exceeds max iterations`），
+整轮失败——而最终错误文案「agent 未产出最终文本（iterations=1）」看着像模型失语，
+实际是**预算配小了**。这不是转发的 off-by-one（转发是忠实的），是契约语义错位。
+## 修法
+三处各自钉一个面：
+1. **文档钉语义**：包注释、`DefaultMaxIterations`、`Config.MaxIterations` 一律
+   写明「模型调用次数（含终稿轮），不是工具轮数」；
+2. **算术下界成常量**：新增 `MinIterationsForToolRound = 2`——1 次调用产出
+   tool_calls、1 次出终稿，这是下界不是经验值，装配期可据此告警；
+3. **预算耗尽可判定**：新增哨兵 `ErrIterationBudgetExhausted` +
+   `iterationBudgetError` 包装（`Error()`/`Unwrap()` **逐字透传**原错误，只额外
+   让 `errors.Is` 成立——既有按文案判断的消费方零感知）。
+判据取**确定性计数**而非文案匹配：`reactHandler` 数 assistant 消息数（一轮生成
+一条 = 一次模型调用），`modelCalls >= budget` 即耗尽。匹配 eino 的
+`exceeds max iterations` 文案不行——那是上游实现细节，改一个字判据就静默失效。
+顺带把 `cfg.maxIterations()` 在 `run` 内只算一次（`budget`）：喂给 eino 的与
+耗尽判据用的必须是同一个数，否则会出现「日志说 12、实际 10」的自相矛盾。
+## 反向验证（两条，均实测红）
+| 注入 | 报错 |
+|---|---|
+| 去掉 `if h.modelCalls >= budget` 标记 | `应判定为预算耗尽（ErrIterationBudgetExhausted）` |
+| 无条件标成预算耗尽 | `上游故障不是预算耗尽——误判会让调用方去调大 MaxIterations 而不是重试/换端点` |
+## 用例（`agentrun/maxiterations_semantics_test.go`）
+- `TestMaxIterationsCountsModelCallsNotToolRounds`：**成对**断言——同一脚本
+  [工具轮, 终稿] 在预算 1 下报 `ErrIterationBudgetExhausted`、在预算
+  `MinIterationsForToolRound`(=2) 下成功返回终稿。只断言「预算 1 失败」证明不了
+  语义（任何 bug 都能让它失败）；
+- `TestModelFailureIsNotBudgetExhaustion`：负对照——上游 500 不得被判成预算耗尽，
+  否则调用方会去调大预算而不是重试/换端点；
+- `TestBudgetExhaustedRequiresZeroToolRounds`：纯问答预算 1 仍成功——「够不够」
+  取决于是否需要工具轮，不是数字本身。
+`mockResponse` 顺带加 `status` 字段（非 0 时回该 HTTP 状态码）以表达「上游故障」
+形态；`Error()` 文案兼容钉仍在既有 `TestRunWithRetrySalvageOnIterationsExhausted`
+里逐字校验。
+
+### 修复(agentrun)：非信封纯文本终稿不再判死——空终稿改报「未产出终稿」（#58）
+
+`unwrapRespond` 的文档说「非该形态原样返回」，但调用方写的是
+```go
+answer := unwrapRespond(lastAssistant)
+if answer == "" || answer == lastAssistant {
+    return nil, fmt.Errorf("... respond 信封异常（%q）", ...)
+}
+```
+即**任何**没解析成 `{"response":...}` 的终稿都整轮失败。而 `sawRespond` 此时
+已为真（BreakLoopAction 已触发、任务确实完成），于是把已经跑完的全部结果丢掉、
+只上抛一句「信封异常」。
+`respond` 是**期望**的收尾方式，不是唯一方式：模型直接给纯文本答复是常见形态。
+现在非信封形态按合法纯文本终稿返回。
+「空」是另一回事——真的没有答案，当然要报；但旧实现报不出，因为
+- 纯空白终稿（`"   "`）会被当成非空答案**静默返回一串空白**；
+- `{"response":""}` 压根不解包（旧 `unwrapRespond` 要求 `probe.Response != ""`），
+  于是把 `{"response":""}` 这段 **JSON 原文**当终稿交出去。
+故本次一并把解包判据从「载荷非空」改成「信封键存在」：键存在即解包，空/空白/
+`null` 载荷一律解包成空串，再由同一条 `strings.TrimSpace(answer) == ""` 判定
+报「未产出终稿（max_steps=%d，最终答复为空）」。
+错误文案也要换：旧那句「信封异常」会把人引向序列化/协议层，而真实情况是模型
+没给答案——两句话指向完全不同的排查方向。
+## 行为变更
+`unwrapRespond({"response":""})` 由「原样返回」变为「返回空串」。既有用例
+`TestUnwrapRespond` 里 `{"response":""}` 原本被钉在「不应改动」那组，本次移到
+「应解包为空」那组——**改的是不变量本身**（信封键存在即解包），不是凑绿；
+`{"response":null}` 同理（`encoding/json` 把 null 解进 string 是 no-op，故与
+空串统一）。非信封形态（`纯文本`、`{"other":1}`、`""`、畸形 JSON）仍逐字原样
+返回，未变。
+## 反向验证
+两处改动各自单独回退，都红：
+1. 判定退回 `answer == "" || answer == lastAssistant`（解包修复保留）——
+   ```
+   TestPlanAndExecutePlainTextFinal: 纯文本终稿应视为合法，不得整轮失败:
+       agentrun: plan-execute respond 信封异常（"最终答复：纯文本，未套信封"）
+   TestPlanAndExecuteBlankFinalIsReportedAsMissing/{"response":""}:
+       应报「未产出终稿」，实得: respond 信封异常（"{\"response\":\"\"}"）
+   TestPlanAndExecuteBlankFinalIsReportedAsMissing/{"response":"___"}:
+       空白终稿应报错，实得 Text="   "
+   TestPlanAndExecuteWhitespaceOnlyContentIsNotAnAnswer:
+       应报「未产出终稿」，实得: respond 信封异常（"   "）
+   ```
+   第一条与 issue 描述的失效形态逐字一致；第三条正是「静默返回空白」。
+2. 解包退回「载荷非空才解包」（判定修复保留）——
+   ```
+   TestPlanAndExecuteBlankFinalIsReportedAsMissing/{"response":""}:
+       空白终稿应报错，实得 Text="{\"response\":\"\"}"
+   TestUnwrapRespond: "{\"response\":\"\"}" 应解包为空/空白，得到 "{\"response\":\"\"}"
+   ```
+   即 JSON 原文被当成终稿交出去。两条都红过才恢复。
+## 用例
+新增 `agentrun/planexecute_plaintext_test.go` 四条：
+- `TestPlanAndExecutePlainTextFinal`：非信封终稿原样返回（issue 的主诉）。
+- `TestPlanAndExecuteBlankFinalIsReportedAsMissing`：三个子用例覆盖
+  全空 / 纯空白 / 换行制表符三种「空」，且断言**不得**再出现「信封异常」。
+- `TestPlanAndExecuteWhitespaceOnlyContentIsNotAnAnswer`：非信封形态的纯空白
+  内容同样不算答案（成对：非空纯文本仍合法，见第一条）。
+- `TestPlanAndExecuteEnvelopeStillUnwrapped`：回归——正常信封仍解包。
+`go vet` + `go test -race -count=1 ./...` 全绿。
+
+### 修复(agentrun)：补 MutatingVerbs 的对外投递/写入/凭据动词——漏判即副作用重复执行（#56）
+
+动词表缺 `send/post/publish/put/patch/transfer/grant/rotate/dispatch/emit`，
+`send_email`、`publish_report`、`put_object`、`transfer_funds`、`rotate_keys`
+这些工具的分段全不命中 ⇒ `IsMutatingTool` 判「非变更类」⇒ 首轮失败后重试守卫
+**放行整体重跑** ⇒ 邮件重发 / 报告重发 / 资金重复转账。
+这是**方向不对称**的缺陷：文档自认「漏判/误判都是必然的」，但
+- 漏判 ⇒ 放行重跑 ⇒ 副作用重复执行（不可撤回）；
+- 误判 ⇒ 放弃一次合法重试（代价小，且可经 `NonMutatingTools` /
+  `MutabilityClassifier` 显式校正回来）。
+所以词表侧的取舍必须是**宁可多收**。按此补三类：
+- 对外投递/发布：`send` `post` `publish` `emit` `dispatch`
+- 写入/覆写：`put` `patch` `upload`（REST 动词与对象存储命名法）
+- 权限与凭据：`grant` `revoke` `transfer` `rotate`（改的都是「谁能做什么」）
+已知的误判倾向写进注释：`post_process` / `get_commit` 这类「动词恰好撞上写动词
+的读操作」会命中——属误判方向，按上面的取舍接受。
+## 反向验证
+只撤回这三行新增动词（其余不动）：
+```
+IsMutatingTool("send_email") = false，漏判会放行整体重跑 → send_email 重复执行
+IsMutatingTool("publish_report") = false …
+IsMutatingTool("transfer_funds") = false …
+（11 条全红）
+```
+## 用例取舍
+三个钉 + 两条端到端：
+- `TestMutatingVerbsCoverOutboundSideEffects`：issue 点名的 15 个工具名逐个断言。
+- `TestMutatingVerbsStillAvoidSubstringFalsePositives`：**这是本次最容易犯的错**
+  —— 补 `send/post/put` 时顺手把分段匹配改成 `strings.Contains`，`use_skill`
+  （含 kill）、`get_running_config`（含 run）、`list_posts`（含 post）、
+  `get_input_schema`（含 put）会全部重新误判，而那正是 agent#45 花两轮生产
+  实弹换来的修正。用例把它们逐条钉住。
+- `TestMutatingVerbsAreLowercase`：`IsMutatingTool` 先 `ToLower` 再查表，
+  表里混入大写项即**永不命中**（静默失效，看起来「加了」其实没加）。
+- `TestRunWithRetrySkipsAfterOutboundVerb`：端到端——`send_email` 工具 + 首轮
+  空答复，断言错误里点名 `send_email` 且**模型调用次数恰为 2**（出现第 3 次即
+  证明守卫没拦住）。只断言「返回了错误」抓不到「错了但重试照跑」。
+- `TestRunWithRetryKeepsReadOnlyToolRetryable`：**成对的反向对照**——`list_posts`
+  必须仍可重试。否则把判定做坏成「一律算变更」也能让前面几条全绿，而重试能力
+  整体消失。
+`go vet` + `go test -race -count=1 ./agentrun/...` 绿。
+
+### 修复(router)：槽位值截断改 rune 口径——中文槽位值不再被切成非法 UTF-8（#57）
+
+`sanitizeSlots` 用 `len(v) > 64`（字节）判定后 `v[:64]` 切片。多字节字符被切在
+中间 ⇒ 产出**非法 UTF-8**，而没有任何报错点：下游按字符串处理的环节
+（JSON 编码、日志、匹配）拿到坏数据，只会表现为「奇怪的行为」。
+仓内其余截断都是 rune 口径（`clarify` 的 `utf8.RuneCountInString` 判定），
+此处是漏网之鱼。
+## 改动
+`if utf8.RuneCountInString(v) > slotValueCap { v = string([]rune(v)[:slotValueCap]) }`：
+`RuneCountInString` 判定不分配，只有真的超限才付一次转换成本。
+顺带在 `slotValueCap` 上写明计量口径是 rune 与理由——这个常量原来只写「长度上限」，
+「长度」按字节还是按字符恰好是这次事故的缝隙。
+## 既有断言也改了（这是改不变量本身，不是凑绿）
+`router_test.go:193` 原来是 `len(got) != slotValueCap` —— 用字节数断言一个
+**错误的口径**。它的输入正是 80 个中文，所以旧断言在旧实现下绿、
+在新实现下红：这不是新代码破坏了契约，而是契约本身从「64 字节」改成
+「64 个字符」。改成 `utf8.RuneCountInString` 并在注释里写明原因。
+⚠️ 这是**行为变更**：64 字节 → 64 字符，多字节槽位值的实际上限随之变大
+（中文从 21 字到 64 字）。发版说明需带上。
+## 反向验证
+逐字退回字节截断（含移除 `unicode/utf8` 导入）：
+| 子用例 | 结果 |
+|---|---|
+| 超 rune 上限的中文（100 字） | 红 —— 结果尾部是悬挂字节 `…中\xe4`，非法 UTF-8 |
+| **超字节上限但未超 rune 上限的中文（30 字）** | 红 —— 本不该被截断的值被截坏 |
+| **恰好 64 rune 的中文** | 红 —— 正好在上限上的值也被切坏 |
+| 超上限的 ASCII | 绿（ASCII 下两种口径等价，符合预期） |
+`go vet` + `go test -race -count=1 ./...`（agent 全仓六包）绿。
+
+### 修复(router)：空关键词不再命中一切，也不再让扫描原地挂死（#59）
+
+根因：hitScan 的唯一前进量是 `start = pos + len(kw)`，而 kw=="" 时
+`strings.Index(s,"")` 恒返回 0、前进量恒 0。于是同一条空词分出两种**静默**失效：
+- 恒真族：boundary=false 的路径首轮就 `return true` ⇒ 词表里一个空项让这条意图
+  吞掉全部输入（KeywordHit / KeywordHitExcept）；
+- 挂死族：boundary=true 的变体（KeywordHitBoundary / KeywordHitBoundaryExcept）
+  与被作废后「继续找下一处」的 KeywordPostNegated 都不 return，循环原地踏步
+  ⇒ goroutine 永久占用 CPU 且永不返回。没有报错、没有日志，只有热路径 hang。
+为什么在原语层守门而不是「加个校验」：router 的关键词是**包级纯函数**，词表由
+消费方自己持有（router.New 校验的是路由名/槽位名），本包没有「词表」这个对象，
+构造期无处可校验。故契约写进 keyword.go 文件头并在五个入口落守卫：
+**空关键词不构成命中**（四个命中入口 + KeywordPostNegated 一律 false）。
+理由不是「空串是任意串的子串」这条数学事实，而是词表语义：词表是数据面
+（消费方从配置/yaml 加载），空串是装配错误，让它命中一切等于把整张词表退化成
+恒真判定。判定从严——宁可某条意图不被词表兜底（还有 LLM 分类面兜），
+不把一切都归给它。
+顺带（同一类装配错误）：maskedAt 遇到空 mask 现在显式 `continue`。空区间容不下
+任何非空命中，所以「跳过」与「放行」在**非空命中下结论相同**，但语义上必须写清
+——把空 mask 当成「包含一切」会让整张排除表恒返回 false（已用成对用例钉住
+「空 mask 不排除 / 非空 mask 照常排除」）。此处是语义澄清，不是行为修复。
+反向验证（三处，各自只拆自家守卫）：
+- 去掉 hitScan 的空词守门 ⇒ 恒真族三条打印「空关键词不得命中」，
+  挂死族两条由看门狗打印「空关键词使扫描原地踏步（永不返回）」
+- 去掉 KeywordPostNegated 的空词守门 ⇒ 该子用例 2.00s 后由看门狗判红
+- 把空 mask 改成 `return true`（当作包含一切）⇒ 空 mask 用例红
+用例设计说明：挂死族不直接写在测试体里，而是走 2s 看门狗 + t.Fatalf——
+否则旧代码下整包要等 10 分钟 go test 超时，报错说不清是哪条入口。
+
+- 杂务(deps)：依赖地板追到最新——textx v0.10.0 / concurrency v0.27.0 / logx v0.8.4 / pkg v0.35.2
+
 ## [v0.13.0] — 2026-11-06
 
 ### 修复(agentrun)：流式零分片成因区分——断流上抛重试，真空答复保持原形态（#46）
