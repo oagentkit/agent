@@ -9,6 +9,21 @@
 // 三重守门都只作废**该处**命中：同一输入里关键词多处出现时，任一处通过全部守门即命中
 // （「先看下执行结果，怎么执行再定」的两处都被构式排除才判 false）。
 //
+// 第 4 条守门=**空关键词**（agent#59）：kw=="" 时 `strings.Index(s,"")` 恒 0、
+// 前进量 `pos+len(kw)` 恒 0 ⇒ 不 return 的分支（词边界变体、后置否定、被作废后
+// 继续找下一处）全部原地踏步、goroutine 永久挂死；而 boundary=false 的首轮就直接
+// 判命中 ⇒ 空词命中一切。两种形态都是**静默**的（挂死没有报错，恒真也不报错）。
+//
+// 契约（写在这里而不是散在各函数）：**空关键词不构成命中**——四个命中入口与
+// KeywordPostNegated 一律返回 false。理由不是「空串是任意串的子串」这条数学事实，
+// 而是词表语义：词表是数据面（消费方从配置/yaml 加载），空串（多一行、少一个值）
+// 是装配错误，让它命中一切等于把整张词表退化成恒真判定。判定一律从严——
+// 宁可某条意图不被词表兜底（还有 LLM 分类面），不把一切都归给它。
+//
+// ⚠️ 这是**兜底**不是**校验**：库原语没有「词表」这个对象，无法在构建期拦下空项
+// （router.New 校验的是路由名/槽位名，关键词表由调用方自己持有）。消费方加载
+// 词表时应自检非空——本守门保证漏检的代价是「这条词不生效」，而不是热路径 hang。
+//
 // 从 bianque 意图路由层提炼（v0.9.4），语言层通用、无领域词。
 package router
 
@@ -63,6 +78,15 @@ func KeywordHitExcept(lowerInput, keyword string, masks []string) bool {
 // boundary=true 叠加 ASCII 词边界判定（拉丁词防 skill/killed 误命中）。
 func hitScan(lowerInput, keyword string, masks []string, boundary bool) bool {
 	kw := strings.ToLower(keyword)
+	// 空词不构成命中（第 4 条守门「空关键词」，见文件头）。
+	// 这不是「空串是不是任意串的子串」的数学问题，而是**词表语义**：空词是
+	// 数据面的装配错误，让它命中一切会把整张词表退化成恒真判定。
+	// 同时它是唯一的**前进量归零点**：start = pos + len(kw) 在 kw=="" 时恒 0，
+	// 而 strings.Index(s,"") 恒返回 0 ⇒ 带守门条件的分支（词边界变体）与被
+	// 作废后继续找下一处的循环永不前进 ⇒ goroutine 永久挂死。
+	if kw == "" {
+		return false
+	}
 	for start := 0; ; {
 		i := strings.Index(lowerInput[start:], kw)
 		if i < 0 {
@@ -103,6 +127,13 @@ func boundaryFail(lower string, pos, end int) bool {
 func maskedAt(lower string, pos, kwLen int, masks []string) bool {
 	for _, m := range masks {
 		mm := strings.ToLower(m)
+		if mm == "" {
+			// 空 mask 是同一类装配错误：它既不能「包含」任何命中（本函数语义是
+			// 「命中区间落在 mask 内部」，长度为 0 的区间容不下非空命中），
+			// 又会让内层扫描在 mpos 上原地空转 O(n) 次。跳过而非放行——
+			// 放行会让空 mask 变成「一切都被排除」。
+			continue
+		}
 		for s := 0; ; {
 			i := strings.Index(lower[s:], mm)
 			if i < 0 {
@@ -132,6 +163,11 @@ var postNegChars = []string{"不", "没", "无", "非"}
 // 输入应已小写（关键词内部 ToLower 兜底）。
 func KeywordPostNegated(lowerInput, keyword string) bool {
 	kw := strings.ToLower(keyword)
+	// 空词无「被否定」可言，且同样会把下面的循环钉在原地（pos+len(kw) 不前进）
+	// ⇒ 直接判否。守门理由与 hitScan 同一段。
+	if kw == "" {
+		return false
+	}
 	for start := 0; ; {
 		i := strings.Index(lowerInput[start:], kw)
 		if i < 0 {
