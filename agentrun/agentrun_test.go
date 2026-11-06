@@ -28,6 +28,9 @@ type mockResponse struct {
 	// chunkDelayMS 每帧之间的生成耗时模拟（毫秒）：真实网关逐 token 产出，
 	// 帧间隔即生成耗时——用它把「用量通道的耗时测量点」钉成可断言的量。
 	chunkDelayMS int
+	// status 非 0 时直接以该 HTTP 状态码回错（模型调用失败形态——区别于
+	// 「预算耗尽」：前者是上游故障，后者是配置配小了，判据必须能分开）。
+	status int
 }
 
 type mockToolCall struct {
@@ -65,6 +68,14 @@ func newMockOpenAI(t *testing.T, responses ...mockResponse) (*mockOpenAI, *opena
 			i = len(m.responses) - 1
 		}
 		resp := m.responses[i]
+
+		// 上游故障形态：不回 200，让 openai 客户端报错（模型调用失败）
+		if resp.status != 0 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(resp.status)
+			_, _ = w.Write([]byte(`{"error":{"message":"upstream boom","type":"server_error"}}`))
+			return
+		}
 
 		// 请求原文留存（读后回填，reqStream/openai 客户端照常消费）
 		b, _ := io.ReadAll(r.Body)
