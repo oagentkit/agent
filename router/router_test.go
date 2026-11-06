@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/oagentkit/llm/llmtest"
 )
@@ -190,8 +191,11 @@ func TestRouterClassifySlots(t *testing.T) {
 	if _, ok := d.Slots["empty"]; ok {
 		t.Fatalf("空值槽位应丢弃: %+v", d.Slots)
 	}
-	if got := d.Slots["long"]; len(got) != slotValueCap {
-		t.Fatalf("超长槽位值应截断到 %d: %d", slotValueCap, len(got))
+	// 口径是 rune 不是字节（agent#57：按字节切会把多字节字符切成非法 UTF-8，
+	// 本用例的输入正是 80 个中文——旧断言用 len() 反而在**钉住错误口径**）
+	if got := d.Slots["long"]; utf8.RuneCountInString(got) != slotValueCap {
+		t.Fatalf("超长槽位值应截断到 %d 个 rune，实得 %d（%d 字节）",
+			slotValueCap, utf8.RuneCountInString(got), len(got))
 	}
 }
 
