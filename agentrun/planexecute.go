@@ -12,7 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/oagentkit/textx/textutil"
+	"strings"
 
 	"github.com/cloudwego/eino/adk"
 	planexecute "github.com/cloudwego/eino/adk/prebuilt/planexecute"
@@ -80,6 +80,10 @@ func PlanAndExecute(ctx context.Context, cfg PlanExecuteConfig, goal string) (*P
 	// unwrapRespond 内容嗅探，executor 步骤输出恰为 {"response":...} JSON
 	// 形态时会被误认（MaxSteps 耗尽时中间步骤输出被当最终答复静默返回）。
 	// 信封解包降级为格式还原：drain 结束后对流末 assistant 做一次。
+	//
+	// ⚠️ 只看流末一个（不扫全部消息）是刻意的：扫全部会把中间步骤的
+	// {"response":...} 输出认成终稿。代价是「流末恰好不是信封」时拿不到信封，
+	// 那种情况按纯文本终稿处理（agent#58）。
 	var lastAssistant string
 	sawRespond := false
 	err = drainEventsFull(iter, "plan-execute", func(event *adk.AgentEvent) error {
@@ -103,9 +107,18 @@ func PlanAndExecute(ctx context.Context, cfg PlanExecuteConfig, goal string) (*P
 	if !sawRespond {
 		return nil, fmt.Errorf("agentrun: plan-execute 未产出最终答复（max_steps=%d，replanner 未判定完成）", maxSteps)
 	}
+	// 非信封形态是合法的终稿（agent#58）：`respond` 是**期望**的收尾方式，
+	// 不是唯一方式——模型直接给纯文本答复是常见形态，此时 sawRespond 已为真
+	// （任务确实完成），而旧实现把「没嗅到信封」当成「信封异常」整轮失败，
+	// 把已经跑完的全部结果丢掉上抛错误。
+	//
+	// 空文本是另一回事：那是真的没有终稿，得单独报（且不能报成「信封异常」，
+	// 那句话会把人指向错误的排查方向）。判空取**解包后**的答案——信封里装
+	// 空白（`{"response":"   "}`）同样是没给答案，只判原文会把它当成非空终稿
+	// 原样返回一串空白。
 	answer := unwrapRespond(lastAssistant)
-	if answer == "" || answer == lastAssistant {
-		return nil, fmt.Errorf("agentrun: plan-execute respond 信封异常（%q）", textutil.TruncEllipsis(lastAssistant, 120))
+	if strings.TrimSpace(answer) == "" {
+		return nil, fmt.Errorf("agentrun: plan-execute 未产出终稿（max_steps=%d，最终答复为空）", maxSteps)
 	}
 	return &PlanExecuteResult{Text: answer}, nil
 }
@@ -174,15 +187,25 @@ func plannerConfig(cfg PlanExecuteConfig) *planexecute.PlannerConfig {
 }
 
 // unwrapRespond 解包 eino respond 工具调用的 {"response":"..."} 信封；
-// 非该形态原样返回（信封未命中 = 调用方据此区分步骤输出与最终答复）。
+// 非该形态原样返回。
+//
+// 判据是「信封键存在」而不是「载荷非空」：旧实现要求 probe.Response != ""，
+// 于是 {"response":""} 不被解包、原样把 JSON 文本当成终稿交出去——「空终稿」
+// 因此永远识别不出来（agent#58）。
 func unwrapRespond(s string) string {
-	var probe struct {
-		Response string `json:"response"`
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(s), &envelope); err != nil {
+		return s
 	}
-	if err := json.Unmarshal([]byte(s), &probe); err == nil && probe.Response != "" {
-		return probe.Response
+	raw, ok := envelope["response"]
+	if !ok {
+		return s
 	}
-	return s
+	var resp string
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return s
+	}
+	return resp
 }
 
 func maxStepsOr(n int) int {
