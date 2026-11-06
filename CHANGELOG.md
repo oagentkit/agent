@@ -2,6 +2,128 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.13.0] — 2026-11-06
+
+### 修复(agentrun)：流式零分片成因区分——断流上抛重试，真空答复保持原形态（#46）
+
+零分片此前直接 return (空消息, nil)——传输/网关断流（连接开即断）与模型
+真空答复两类成因被合并成同一成功形态，下游据「空内容」触发整程重试重放
+工具采集，瞬断被放大成完整重放。
+- 零分片（干净 EOF 即断）显式报错「传输/网关侧断流」——走生成重试
+- 有分片但内容空（真空答复）保持空消息成功——仍走既有「空答复」判定面
+  （错误文案区分空答复/没答复的注释语义不变）
+TestStreamDeltasZeroChunkCause：零分片报错含成因 + 空内容分片保持成功形态。
+全仓 -race 绿。
+关联 oagentkit/agent#46
+Co-authored-by: Murphy-Yi <zhangyi@Murphy-YideMac-Mini.local>
+
+### 修复(agentrun,router,clarify)：观察钩子 recover 兑现 + mutability 显式通道 + 词表严格解码（#42 #43 #44 #45）
+
+agent#42/#44——「钩子 panic 不影响主链」注释与实现对齐：
+- router.observeDecision 补 recover（此前裸调，宿主指标回调 panic 沿
+  Classify/Run 击穿调用方 goroutine；恢复即静默终结该次观察——主链不受
+  牵连是优先级）
+- agentrun.WithOnEvent doc 消歧：明确「回调 panic 会击穿调用方 goroutine，
+  本包不代为 recover，消费方自行 recover」——此前「消费失败不影响事件面
+  完整性」的措辞给了错误的安全暗示
+agent#43——clarify 词表 typo 静默降级两道修复：
+- LoadVocab 改 yaml KnownFields 严格解码：terms: 误写 items:/term: 不再
+  静默忽略（加载「成功」但注入段缺术语的慢性降级），拼错键解析层即报错
+- 新增 ValidateTermsStrict（opt-in）：非 vague 条目 Terms 为空的结构层
+  兜底。不并入 Validate——词条只做路由、无术语展示是合法形态（既有测试
+  钉住的语义），需要注入完备性的宿主装配期显式调用
+agent#45——变更性判定显式通道：Config.MutabilityClassifier 非 nil 时整体
+接管 IsMutatingTool 启发式与 NonMutatingTools 豁免集（判定单源）——
+run_readonly_commands 命中 run 段的误判（bianque 两轮生产实弹）不再要求
+每个下游维护豁免集；名字拿不准的域外工具走显式声明而非重猜（mcpkit
+ReadOnly 注解经此喂数据单源）。
+测试：TestObserveDecisionPanicContained / TestLoadVocabStrictKeys（拼错键
+报错+合法通过+严格检查两态）/ TestMutabilityClassifierOverrides（误判
+基线复现+接管+豁免集不参与）。全仓 -race 绿。
+关联 oagentkit/agent#42 oagentkit/agent#43 oagentkit/agent#44 oagentkit/agent#45
+Co-authored-by: Murphy-Yi <zhangyi@Murphy-YideMac-Mini.local>
+
+- 杂务(deps)：依赖地板追到最新——github.com/oagentkit/textx v0.9.0
+
+| 依赖 | 现地板 | 抬到 |
+|---|---|---|
+| `github.com/oagentkit/textx` | `v0.8.0` | `v0.9.0` |
+## 为什么
+矩阵的**发版时刻地板时效**门禁（`verify_tag_floor --ref HEAD`）要求：各仓 HEAD
+（= 下次发版会发出去的内容）的依赖地板，相对那一刻的依赖最新版本，不能已落后。
+oekit 基座与矩阵模块都在高频发版 ⇒ 地板是**跑步机**，落后一格就会判红。
+## 兼容性实测
+本工具在提交前跑完 `go build` / `go vet` / `go test -race -count=1 ./...`（全绿才提交）
+与 `go mod tidy -diff`（无漂移）⇒ 改动**只影响依赖版本**，零行为差异。
+只改 `go.mod` / `go.sum` ⇒ 不需要 CHANGELOG 条目（版本段由下次发版的 `prewrite` 生成）。
+Co-authored-by: Murphy-Yi <zhangyi@Murphy-YideMac-Mini.local>
+
+- 杂务(deps)：依赖地板追到最新——github.com/oekit/concurrency v0.25.1
+
+| 依赖 | 现地板 | 抬到 |
+|---|---|---|
+| `github.com/oekit/concurrency` | `v0.24.0` | `v0.25.1` |
+| `github.com/oekit/logx` | `v0.8.2` | `v0.8.3` |
+## 为什么
+矩阵的**发版时刻地板时效**门禁（`verify_tag_floor --ref HEAD`）要求：各仓 HEAD
+（= 下次发版会发出去的内容）的依赖地板，相对那一刻的依赖最新版本，不能已落后。
+oekit 基座与矩阵模块都在高频发版 ⇒ 地板是**跑步机**，落后一格就会判红。
+## 兼容性实测
+本工具在提交前跑完 `go build` / `go vet` / `go test -race -count=1 ./...`（全绿才提交）
+与 `go mod tidy -diff`（无漂移）⇒ 改动**只影响依赖版本**，零行为差异。
+只改 `go.mod` / `go.sum` ⇒ 不需要 CHANGELOG 条目（版本段由下次发版的 `prewrite` 生成）。
+Co-authored-by: Murphy-Yi <zhangyi@Murphy-YideMac-Mini.local>
+
+- 杂务(deps)：依赖地板追到最新——github.com/oagentkit/textx v0.8.0
+
+| 依赖 | 现地板 | 抬到 |
+|---|---|---|
+| `github.com/oagentkit/textx` | `v0.7.2` | `v0.8.0` |
+## 为什么
+矩阵的**发版时刻地板时效**门禁（`verify_tag_floor --ref HEAD`）要求：各仓 HEAD
+（= 下次发版会发出去的内容）的依赖地板，相对那一刻的依赖最新版本，不能已落后。
+oekit 基座与矩阵模块都在高频发版 ⇒ 地板是**跑步机**，落后一格就会判红。
+## 兼容性实测
+本工具在提交前跑完 `go build` / `go vet` / `go test -race -count=1 ./...`（全绿才提交）
+与 `go mod tidy -diff`（无漂移）⇒ 改动**只影响依赖版本**，零行为差异。
+只改 `go.mod` / `go.sum` ⇒ 不需要 CHANGELOG 条目（版本段由下次发版的 `prewrite` 生成）。
+Co-authored-by: Murphy-Yi <zhangyi@Murphy-YideMac-Mini.local>
+
+- 杂务(deps)：依赖地板追到最新——github.com/oekit/pkg v0.34.1
+
+| 依赖 | 现地板 | 抬到 |
+|---|---|---|
+| `github.com/oekit/pkg` | `v0.34.0` | `v0.34.1` |
+## 为什么
+矩阵的**发版时刻地板时效**门禁（`verify_tag_floor --ref HEAD`）要求：各仓 HEAD
+（= 下次发版会发出去的内容）的依赖地板，相对那一刻的依赖最新版本，不能已落后。
+oekit 基座与矩阵模块都在高频发版 ⇒ 地板是**跑步机**，落后一格就会判红。
+## 兼容性实测
+本工具在提交前跑完 `go build` / `go vet` / `go test -race -count=1 ./...`（全绿才提交）
+与 `go mod tidy -diff`（无漂移）⇒ 改动**只影响依赖版本**，零行为差异。
+只改 `go.mod` / `go.sum` ⇒ 不需要 CHANGELOG 条目（版本段由下次发版的 `prewrite` 生成）。
+Co-authored-by: Murphy-Yi <zhangyi@Murphy-YideMac-Mini.local>
+
+- 杂务(deps)：依赖地板追到最新——github.com/oagentkit/llm v0.19.0
+
+| 依赖 | 现地板 | 抬到 |
+|---|---|---|
+| `github.com/oagentkit/llm` | `v0.18.1` | `v0.19.0` |
+| `github.com/oagentkit/textx` | `v0.7.1` | `v0.7.2` |
+| `github.com/oekit/concurrency` | `v0.23.2` | `v0.24.0` |
+| `github.com/oekit/logx` | `v0.8.0` | `v0.8.2` |
+| `github.com/oekit/pkg` | `v0.31.0` | `v0.34.0` |
+## 为什么
+矩阵的**发版时刻地板时效**门禁（`verify_tag_floor --ref HEAD`）要求：各仓 HEAD
+（= 下次发版会发出去的内容）的依赖地板，相对那一刻的依赖最新版本，不能已落后。
+oekit 基座与矩阵模块都在高频发版 ⇒ 地板是**跑步机**，落后一格就会判红。
+## 兼容性实测
+本工具在提交前跑完 `go build` / `go vet` / `go test -race -count=1 ./...`（全绿才提交）
+与 `go mod tidy -diff`（无漂移）⇒ 改动**只影响依赖版本**，零行为差异。
+只改 `go.mod` / `go.sum` ⇒ 不需要 CHANGELOG 条目（版本段由下次发版的 `prewrite` 生成）。
+Co-authored-by: Murphy-Yi <zhangyi@Murphy-YideMac-Mini.local>
+
+
 ## [v0.12.0] — 2026-10-30
 
 ### 新增(agentrun)：暴露 ToolsNodeConfig.ToolAliases / UnknownToolsHandler
