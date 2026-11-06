@@ -23,9 +23,23 @@ var MutatingVerbs = map[string]bool{
 	"write": true, "set": true, "update": true, "apply": true, "deploy": true,
 	"enable": true, "disable": true, "flush": true, "truncate": true, "mount": true,
 	"umount": true, "unmount": true, "killall": true, "chmod": true, "chown": true,
+	// 对外投递/发布类（agent#56）：这些动词的共同点是**执行即产生不可撤回的外部
+	// 效果**——邮件已发出、报告已公开、资金已转账、密钥已轮换。首轮失败后整体
+	// 重跑不是「再试一次」，是「再做一次」。
+	"send": true, "post": true, "publish": true, "emit": true, "dispatch": true,
+	// 写入/覆写类：REST 动词与对象存储命名法（put_object / patch_config）
+	"put": true, "patch": true, "upload": true,
+	// 权限与凭据变更：授权/转账/轮换/吊销都改的是「谁能做什么」
+	"grant": true, "revoke": true, "transfer": true, "rotate": true,
 }
 
 // IsMutatingTool 工具名是否变更类（非幂等）：小写后按下划线分段精确匹配动词表。
+//
+// ⚠️ 词表漏判是**危险方向**（agent#56）：漏判 ⇒ 放行整体重跑 ⇒ 副作用重复执行
+// （邮件重发/报告重发/资金重复转账）；误判只是放弃一次合法重试，代价小得多。
+// 所以拿不准的动词一律收进来，宁可在跟踪侧用 NonMutatingTools / MutabilityClassifier
+// 校正回来。已知的误判倾向：`post_process` / `get_commit` 这类「动词恰好撞上
+// 写动词的读操作」会命中——它们属于「误判方向」，按上面的取舍接受。
 //
 // ⚠️ 启发式边界（oagentkit/agent#45，bianque 两轮生产实弹）：动词段匹配对
 // 「run_readonly_commands」类命名会误判（"run" 段命中）——名字启发式在工具名
