@@ -14,6 +14,14 @@
 //
 // ReAct 出口判定：assistant 消息且不带 tool_calls 即最终答复；
 // MaxIterations 耗尽仍未出口 → 报错（调用方可决定降级）。
+//
+// ⚠️ MaxIterations 计的是**模型调用次数**（含产出终稿的那一次），不是工具轮数
+// （agent#60）。一次工具轮 = 1 次返回 tool_calls 的调用，终稿还要再 1 次 ⇒
+// 「工具轮 + 终稿」至少需要 MaxIterations ≥ MinIterationsForToolRound(2)。
+// 按「循环轮数」直觉填 1 的配置能跑通纯问答（1 次调用即终稿），但任何需要工具的
+// 任务都会在工具轮之后的第二次调用处被 eino 拒（`exceeds max iterations`），
+// 整轮失败而错误文案看着像「模型没产出终稿」——预算不足与模型失语是两回事，
+// 用 ErrIterationBudgetExhausted 区分。
 package agentrun
 
 import (
@@ -33,8 +41,39 @@ import (
 	"github.com/oagentkit/llm"
 )
 
-// 默认迭代上限（ADK ReAct 循环轮数；防失控循环）。
+// 默认迭代上限（**模型调用次数**，含终稿轮；防失控循环）。
+//
+// 历史注释写的是「ADK ReAct 循环轮数」——ADK 那个字段其实是 ChatModel
+// generation cycles（每次模型调用一次），按「循环轮数」理解会低估一半
+// （工具轮还要再花一次出终稿，agent#60）。
 const DefaultMaxIterations = 12
+
+// MinIterationsForToolRound 完成「一轮工具调用 + 终稿」所需的最小 MaxIterations。
+//
+// 不是经验值而是算术下界：1 次调用产出 tool_calls、1 次调用产出终稿 ⇒ 至少 2。
+// 低于它的配置在纯问答下仍能用（1 次调用即终稿），但一旦模型决定调工具就必然
+// 在第二次调用处撞上限（agent#60：MaxIterations=1 + [工具轮, 终稿] 直接整轮失败）。
+// 装配期做 `< MinIterationsForToolRound` 的告警能提前暴露这类配置。
+const MinIterationsForToolRound = 2
+
+// ErrIterationBudgetExhausted 迭代预算耗尽（MaxIterations 次模型调用已用完）。
+//
+// 与「模型调用失败」是两回事，必须能分开判：前者是**预算配小了**（调大重跑即可，
+// 且往往说明任务确实需要更多轮），后者是模型/网关故障（重试同样的预算是合理的）。
+// 判据是**确定性计数**——reactHandler 数到的 assistant 消息数（= 模型调用次数）
+// 达到预算，而不是匹配错误文本（eino 的文案属于上游实现细节，改一个字就失效）。
+var ErrIterationBudgetExhausted = errors.New("agentrun: 迭代预算耗尽（MaxIterations 次模型调用已用完）")
+
+// iterationBudgetError 预算耗尽标记：Error()/Unwrap() **逐字透传**原错误
+// （既有按文案判断的消费方零感知），只额外让 errors.Is(err,
+// ErrIterationBudgetExhausted) 成立。
+type iterationBudgetError struct{ err error }
+
+func (e *iterationBudgetError) Error() string { return e.err.Error() }
+func (e *iterationBudgetError) Unwrap() error { return e.err }
+func (e *iterationBudgetError) Is(target error) bool {
+	return target == ErrIterationBudgetExhausted
+}
 
 // Config ReAct agent 运行配置。
 type Config struct {
@@ -82,7 +121,11 @@ type Config struct {
 	// name=模型请求的工具名，input=该次调用的参数原文（JSON 字符串）。
 	// nil/空=零行为（存量路径不变：eino 侧未设时直接报错）。
 	UnknownToolsHandler func(ctx context.Context, name, input string) (string, error)
-	// MaxIterations ReAct 循环轮数上限（默认 12）。
+	// MaxIterations **模型调用次数**上限（默认 12），含产出终稿的那一次。
+	//
+	// 不是「工具轮数」：一轮工具 = 1 次返回 tool_calls 的调用，之后还要一次调用
+	// 才出终稿 ⇒ 「工具轮 + 终稿」需 ≥ MinIterationsForToolRound(2)（agent#60）。
+	// 预算耗尽与模型调用失败可用 errors.Is(err, ErrIterationBudgetExhausted) 区分。
 	MaxIterations int
 	// RetryAfterMutation 变更类工具已执行后仍允许整体重试（默认 false=守卫生效：
 	// 首轮调过变更类工具后失败不再重跑——重复副作用风险，如实上抛交调用方降级）。
@@ -297,13 +340,16 @@ func run(ctx context.Context, cfg Config, query string, onEvent func(Event)) (st
 	if cfg.ToolsFactory != nil {
 		tools = cfg.ToolsFactory()
 	}
+	// 预算只算一次：喂给 eino 的与「是否耗尽」判据必须是同一个数，否则
+	// 改一处漏一处就会出现「日志说 12、实际 10」这种自相矛盾（agent#60）。
+	budget := cfg.maxIterations()
 
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
 		Name:          cfg.Name,
 		Description:   cfg.Description,
 		Instruction:   cfg.Instruction,
 		Model:         cfg.Model,
-		MaxIterations: cfg.maxIterations(),
+		MaxIterations: budget,
 		ToolsConfig: adk.ToolsConfig{
 			ToolsNodeConfig: compose.ToolsNodeConfig{
 				Tools:               tools,
@@ -325,15 +371,22 @@ func run(ctx context.Context, cfg Config, query string, onEvent func(Event)) (st
 	h := &reactHandler{ctx: ctx, onEvent: onEvent, onUsage: cfg.OnUsage, toolCalled: map[string]string{}}
 	err = drainEvents(iter, "agent", h.handle)
 	if err != nil {
+		werr := err
+		// 预算耗尽 vs 模型调用失败：前者是配置配小了，后者是上游故障，重跑策略
+		// 不同（agent#60）。判据是**数出来的** assistant 消息数，不是匹配 eino
+		// 的错误文案——文案是上游实现细节，改一个字判据就失效。
+		if h.modelCalls >= budget {
+			werr = &iterationBudgetError{err: err}
+		}
 		// 运行错误（迭代耗尽/LLM 调用失败等）同样携带末轮思考——重试侧救回的
 		// 数据源不限于「终稿缺失」形态（迭代耗尽时分析往往已大部分完成）。
-		return "", &runError{err: err, lastReasoning: h.lastReasoning}
+		return "", &runError{err: werr, lastReasoning: h.lastReasoning}
 	}
 	if !h.sawFinal {
-		return "", &FinalMissingError{Iterations: cfg.maxIterations(), LastReasoning: h.lastReasoning}
+		return "", &FinalMissingError{Iterations: budget, LastReasoning: h.lastReasoning}
 	}
 	if strings.TrimSpace(h.finalText) == "" {
-		return "", &FinalMissingError{EmptyContent: true, Iterations: cfg.maxIterations(), LastReasoning: h.lastReasoning}
+		return "", &FinalMissingError{EmptyContent: true, Iterations: budget, LastReasoning: h.lastReasoning}
 	}
 	return h.finalText, nil
 }
@@ -410,6 +463,10 @@ type reactHandler struct {
 	// lastReasoning 最后一轮 assistant 消息的思考片段（终稿缺失救回的数据源：
 	// FinalMissingError 携带它供重试侧附档，见 salvageSection）。
 	lastReasoning string
+	// modelCalls 收到的 assistant 消息数 = 模型调用次数（一轮生成一条）。
+	// 它是「预算是否耗尽」的**确定性**判据（agent#60）：MaxIterations 计的就是
+	// 这个量，自己数出来就不必去匹配 eino 的 `exceeds max iterations` 文案。
+	modelCalls int
 }
 
 func (h *reactHandler) handle(mv *adk.MessageVariant) error {
@@ -461,6 +518,8 @@ func (h *reactHandler) handle(mv *adk.MessageVariant) error {
 	if mv.Role != schema.Assistant {
 		return nil
 	}
+	// 一条 assistant 消息 = 一次模型调用（流式在收流 concat 后只走一遍这里）
+	h.modelCalls++
 	// 思考过程先于动作/答复（同一 assistant 消息内 reasoning_content 先产出）；
 	// 末轮思考留存供终稿缺失救回（不依赖 onEvent 是否装配）。
 	if mv.Message.ReasoningContent != "" {
