@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
@@ -205,6 +206,9 @@ func (r *Router) Classify(ctx context.Context, input string) (Decision, error) {
 }
 
 // slotValueCap 单个槽位值长度上限（LLM 幻觉防护：槽位值是短枚举/布尔，不是内容字段）。
+// 计量口径是 **rune**，不是字节——按字节切会把多字节字符切成非法 UTF-8
+// （agent#57）。仓内其余截断（clarify 的 `utf8.RuneCountInString` 判定等）
+// 同为 rune 口径，这里是与之一致。
 const slotValueCap = 64
 
 // sanitizeSlots 槽位提取结果自守恒：只保留已配置槽位名，去空白、丢空值、截断超长值。
@@ -221,8 +225,11 @@ func sanitizeSlots(in map[string]string, configured map[string]bool) map[string]
 		if v == "" {
 			continue
 		}
-		if len(v) > slotValueCap {
-			v = v[:slotValueCap]
+		// rune 口径截断：`v[:64]` 在中文槽位值上会切在第 22 个字的中间，
+		// 产出的字符串连 utf8.ValidString 都过不了 ⇒ 下游按字符串处理的
+		// 任何环节（JSON 编码、日志、匹配）都会拿到坏数据。
+		if utf8.RuneCountInString(v) > slotValueCap {
+			v = string([]rune(v)[:slotValueCap])
 		}
 		out[k] = v
 	}
