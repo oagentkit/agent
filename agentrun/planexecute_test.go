@@ -132,9 +132,16 @@ func TestUnwrapRespond(t *testing.T) {
 		t.Fatalf("信封应解包: %q", got)
 	}
 	// 非信封形态原样返回。
-	for _, s := range []string{"纯文本", `{"other":1}`, "", `{"response":""}`} {
+	for _, s := range []string{"纯文本", `{"other":1}`, "", `{"response":`} {
 		if got := unwrapRespond(s); got != s {
 			t.Fatalf("%q 不应改动，得到 %q", s, got)
+		}
+	}
+	// 信封键存在即解包，载荷为空/空白/null 都解包成空串（agent#58：否则
+	// 「空终稿」会被原样当成 JSON 文本交出去，永远识别不出「没给答案」）。
+	for _, s := range []string{`{"response":""}`, `{"response":"   "}`, `{"response":null}`} {
+		if got := unwrapRespond(s); strings.TrimSpace(got) != "" {
+			t.Fatalf("%q 应解包为空/空白，得到 %q", s, got)
 		}
 	}
 }
