@@ -4,6 +4,11 @@
 
 ## [v0.14.3] — 2026-11-08
 
+- 杂务(deps)：依赖地板追到最新——github.com/oekit/logx v0.8.10
+
+logx v0.8.10 落地，发版时刻地板时效门禁要求追平（matrix-tools#188 发版链）。
+兼容性实测：go build / go vet / go test -race -count=1 ./... 全绿，go mod tidy -diff 无漂移。
+
 - 杂务(deps)：依赖地板追到最新——concurrency v0.28.4 / logx v0.8.9 / pkg v0.37.4 + 矩阵新 tag（按本仓依赖取齐）
 
 发版时刻地板时效门禁（verify_tag_floor --ref HEAD）要求追平（matrix-tools#188 发版链）。
