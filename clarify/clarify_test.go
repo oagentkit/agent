@@ -72,6 +72,47 @@ func TestResolveAnswer(t *testing.T) {
 	}
 }
 
+// TestResolveAnswerOptionMatching 回归（oagentkit/agent#69）：选项匹配收紧为
+// 「精确相等优先 + 否定前缀防护的 Contains」。此前单轮 strings.Contains 把
+// 「不是」误命中「是」——否定前缀被子串吞掉，用户明确拒绝被当成同意（P2）。
+// 语义：否定形态否决该选项；二元选项下否定无歧义指另一个（「不是」→「否」）；
+// 长选项保留宽松包含（「请删除数据库」对「删除数据库」仍命中）。
+func TestResolveAnswerOptionMatching(t *testing.T) {
+	cases := []struct {
+		name       string
+		options    []string
+		answer     string
+		picked     string
+		isFallback bool
+		ok         bool
+	}{
+		// issue #69 原始例子：「不是」=「否」，不得因子串含「是」命中「是」
+		{"不是在二元里是否", []string{"是", "否"}, "不是", "否", false, true},
+		{"不同意不命中同意而是另一选项", []string{"同意", "拒绝"}, "不同意", "拒绝", false, true},
+		{"不同意对显式反选项精确命中", []string{"同意", "不同意"}, "不同意", "不同意", false, true},
+		{"不可以对显式反选项精确命中", []string{"可以", "不可以"}, "不可以", "不可以", false, true},
+		{"不确定不命中确定", []string{"确定", "不确定"}, "不确定", "不确定", false, true},
+		{"否定词选别的否定词", []string{"意见", "无意见"}, "没意见", "无意见", false, true},
+		{"别形态二元翻转", []string{"退出", "继续"}, "别退出", "继续", false, true},
+		// 否定无法定位到单一选项时不翻转，也不误命中被否定选项
+		{"三元下否定不翻转", []string{"同意", "拒绝", "弃权"}, "不同意", "", false, false},
+		{"单选项否定不命中", []string{"知道"}, "不知道", "", false, false},
+		{"多个选项同被否定不翻转", []string{"要退出", "退出"}, "不要退出", "", false, false},
+		// 精确相等优先：不被先声明的短子串截胡
+		{"精确相等优先于短子串", []string{"删除", "删除数据库"}, "删除数据库", "删除数据库", false, true},
+		// 长选项保留宽松 Contains 容错（issue 要求不回退的能力）
+		{"长选项宽松包含", []string{"删除数据库", "保留快照"}, "请删除数据库", "删除数据库", false, true},
+		{"strip 后精确", []string{"磁盘 IO", "内存"}, "磁盘io", "磁盘 IO", false, true},
+	}
+	for _, c := range cases {
+		picked, isFb, ok := ResolveAnswer(c.options, "不清楚，全面查", c.answer)
+		if ok != c.ok || isFb != c.isFallback || (ok && picked != c.picked) {
+			t.Errorf("%s: ResolveAnswer(%q) = (%q,%v,%v), want (%q,%v,%v)",
+				c.name, c.answer, picked, isFb, ok, c.picked, c.isFallback, c.ok)
+		}
+	}
+}
+
 func TestValidate(t *testing.T) {
 	ok := []Entry{
 		{Word: "负载", Dimension: "system_load", Vague: true, Clarify: &Options{Question: "哪一类？", Options: stubOptions(), Fallback: "不清楚，全面查"}},

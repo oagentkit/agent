@@ -1,5 +1,6 @@
 // Package clarify 澄清/标准化词表内核：口语→规范维度词条（term_map）的模型、外置
-// 加载、内在校验，以及澄清反问的回答消解（序数指代 → 选项词包含 → 逃生兜底）。
+// 加载、内在校验，以及澄清反问的回答消解（序数指代 → 选项词匹配（精确相等优先 +
+// 否定前缀防护的包含）→ 逃生兜底）。
 //
 // 归一/澄清只补充语义不改路由：词表命中产出宿主槽位（词表治本，LLM 同名槽位不可
 // 推翻）；挂起态存取、反问状态机与注入段渲染留宿主——本包只管「表长什么样、回答
@@ -136,11 +137,35 @@ func OrdinalIndex(lower string) (int, bool) {
 	return n, ok
 }
 
+// negWords 否定前缀词表：答案以这些否定词**直接拼接**选项词时构成该选项的否定
+// 形态（「不是」对「是」、「不同意」对「同意」、「没意见」对「意见」）。
+var negWords = []string{"不", "没", "别", "非", "无", "莫", "勿", "不要", "不用", "没有"}
+
+// isNegatedForm 报告 a（已 strip）是否为否定词直接拼接 opt（已 strip）的否定形态
+// （a == 否定词+opt）。仅整串精确拼接算数：「我觉得不是」这类松散否定不在防护
+// 范围——那是宽松 Contains 容错的既有边界。
+func isNegatedForm(a, opt string) bool {
+	for _, neg := range negWords {
+		if a == neg+opt {
+			return true
+		}
+	}
+	return false
+}
+
 // ResolveAnswer 澄清回答消解：序数指代（1-based 对 options 序，越界=放弃）→ 选项词
-// 包含匹配（双侧去空格，容「磁盘io」对「磁盘 IO」）→ 逃生选项（答案是其前缀也算，
-// 如「不清楚」对「不清楚，全面查」）。
+// 匹配（双侧去空格；先全量精确相等，再退宽松 Contains，且否定前缀形态不做 Contains
+// 命中，见下）→ 逃生选项（答案是其前缀也算，如「不清楚」对「不清楚，全面查」）。
 // picked=命中的选项词（fallback 命中时为空）；ok=false=回答不在本题语义内（宿主按
 // 「用户换话题」处置，清挂起走正常分类）。
+//
+// 选项匹配两轮（oagentkit/agent#69）：第一轮全量精确相等；第二轮宽松 Contains 兜底
+// （保留长选项的容错，「请删除数据库」对「删除数据库」仍命中）。此前单轮 Contains
+// 会把「不是」误命中「是」——否定前缀被子串吞掉，用户明确拒绝被当成同意（P2）。
+// 防护规则：答案=否定词直接拼接选项词时，该选项视为被否定而非被选择；在恰好两个
+// 选项的强制选择题里，对一个选项的否定无歧义地指另一个（「不是」在 {是,否} 里就是
+// 「否」、「不同意」在 {同意,拒绝} 里就是「拒绝」），选项数 ≠2 时否定无法定位到单一
+// 选项，不做翻转（交由逃生/换话题路径处置）。
 func ResolveAnswer(options []string, fallback, answer string) (picked string, isFallback bool, ok bool) {
 	lower := strings.TrimSpace(strings.ToLower(answer))
 	if lower == "" {
@@ -157,10 +182,35 @@ func ResolveAnswer(options []string, fallback, answer string) (picked string, is
 	if a == "" {
 		return "", false, false
 	}
-	for _, o := range options {
-		if strings.Contains(a, strip(o)) {
+	// 第一轮：strip 后精确相等优先——答案与后声明的更长选项完全一致时命中更长者
+	// （「删除数据库」不再被先声明的「删除」截胡）。
+	stripped := make([]string, len(options))
+	for i, o := range options {
+		stripped[i] = strip(o)
+		if stripped[i] != "" && a == stripped[i] {
 			return o, false, true
 		}
+	}
+	// 第二轮：宽松 Contains；否定前缀形态（「不是」「不同意」「不可以」……）的
+	// 选项被否决，不经子串命中。negIdx/negCount 记录被否决的选项供二元翻转。
+	negIdx, negCount := -1, 0
+	for i, so := range stripped {
+		if so == "" || !strings.Contains(a, so) {
+			continue
+		}
+		if isNegatedForm(a, so) {
+			if negCount == 0 {
+				negIdx = i
+			}
+			negCount++
+			continue
+		}
+		return options[i], false, true
+	}
+	// 二元否定翻转：恰有两个选项且恰好一个被否定形态否决时，答案指向另一个；
+	// 多个选项同被否定（歧义）或选项数 ≠2 时不翻转。
+	if negCount == 1 && len(options) == 2 {
+		return options[1-negIdx], false, true
 	}
 	fb := strip(fallback)
 	if fb != "" {
