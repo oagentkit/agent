@@ -2,6 +2,12 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.14.2] — 2026-11-08
+
+### 依赖地板：基座追平 oekit BOM v0.2.7——concurrency v0.28.3 / pkg v0.37.3 / logx v0.8.8
+
+oekit BOM 兼容地板门禁（oekit/oekit#163）纳入 oagentkit 消费方后的对齐轮。
+
 ## [v0.14.1] — 2026-11-07
 
 ### 修复(clarify)：选项匹配精确优先+否定前缀防护——「不是」不再命中「是」（#69）
