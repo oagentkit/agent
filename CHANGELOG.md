@@ -2,6 +2,14 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.14.3] — 2026-11-08
+
+- 杂务(deps)：依赖地板追到最新——concurrency v0.28.4 / logx v0.8.9 / pkg v0.37.4 + 矩阵新 tag（按本仓依赖取齐）
+
+发版时刻地板时效门禁（verify_tag_floor --ref HEAD）要求追平（matrix-tools#188 发版链）。
+兼容性实测：go build / go vet / go test -race -count=1 ./... 全绿，go mod tidy -diff 无漂移。
+
+
 ## [v0.14.2] — 2026-11-08
 
 - 杂务(deps)：依赖地板追平——基座 v0.28.3/v0.37.3/v0.8.8（oekit BOM v0.2.7 对齐轮）
