@@ -2,11 +2,38 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.14.6] — 2026-11-09
+
+### 修复：agent 第三轮 issue 清零（#88 #89 #90 #91）
+
+* fix(agentrun): ErrIterationBudgetExhausted 改成因分类判据——末轮工具失败不再误标为预算耗尽（#88）
+* fix(dispatch): NewGuard 对 maxDepth<=0 构造期 panic——深度漏配装配期暴露而非运行期静默全拒（#89）
+* fix(agentrun): IsMutatingTool 分段覆盖规范名形态（server.工具名），豁免集跨形态互认（#90）
+* fix(agentrun): WithRetry 仅限流失败采信 Retry-After——陈旧建议不得吞掉非限流失败的重试（#91）
+
+- 杂务(deps)：依赖地板追到最新——github.com/oagentkit/llm v0.21.5
+
+| 依赖 | 现地板 | 抬到 |
+|---|---|---|
+| `github.com/oagentkit/llm` | `v0.21.4` | `v0.21.5` |
+| `github.com/oagentkit/textx` | `v0.10.3` | `v0.10.4` |
+| `github.com/oekit/concurrency` | `v0.29.0` | `v0.30.1` |
+| `github.com/oekit/logx` | `v0.8.11` | `v0.8.12` |
+| `github.com/oekit/pkg` | `v0.38.0` | `v0.39.0` |
+## 为什么
+矩阵的**发版时刻地板时效**门禁（`verify_tag_floor --ref HEAD`）要求：各仓 HEAD
+（= 下次发版会发出去的内容）的依赖地板，相对那一刻的依赖最新版本，不能已落后。
+oekit 基座与矩阵模块都在高频发版 ⇒ 地板是**跑步机**，落后一格就会判红。
+## 兼容性实测
+本工具在提交前跑完 `go build` / `go vet` / `go test -race -count=1 ./...`（全绿才提交）
+与 `go mod tidy -diff`（无漂移）⇒ 改动**只影响依赖版本**，零行为差异。
+只改 `go.mod` / `go.sum` ⇒ 不需要 CHANGELOG 条目（版本段由下次发版的 `prewrite` 生成）。
+Co-authored-by: Murphy-Yi <zhangyi@Murphy-YideMac-Mini.local>
+
+
 ## [v0.14.5] — 2026-11-08
 
-### 依赖地板：oekit 基座追平——pkg v0.38.0 / logx v0.8.11 / concurrency v0.29.0
-
-oekit BOM v0.2.11 兼容地板门禁（oekit#163）对齐轮；无代码变更。
+- 与 v0.14.4 相比无代码差异（版本号/打包变更）
 
 ## [v0.14.4] — 2026-11-08
 
