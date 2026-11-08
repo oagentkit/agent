@@ -33,7 +33,17 @@ var MutatingVerbs = map[string]bool{
 	"grant": true, "revoke": true, "transfer": true, "rotate": true,
 }
 
-// IsMutatingTool 工具名是否变更类（非幂等）：小写后按下划线分段精确匹配动词表。
+// IsMutatingTool 工具名是否变更类（非幂等）：小写后按分隔符分段精确匹配动词表。
+//
+// 分隔符全集 = 下划线 + 点 + 连字符（agent#90）：本仓的规范名契约是带前缀形态
+// （`server.工具名`，MCP 场景，见 Config.ToolAliases），模型可能按规范名调用
+// （`srv.send_email`）也可能按裸名调用（`send_email`）。只按 `_` 分段时规范名的
+// 动词段与 server 前缀被 `.` 黏连（`srv.send_email` → [srv.send email]），动词段
+// 永不落单，守卫对整类规范名恒 false——副作用守卫的有效性由「模型这次发的是
+// 裸名还是规范名」这一不可控变量决定，漏判方向是邮件重发/资金重复转账。连字符
+// 一并算分隔符：server 名自身可含连字符（`ask-ops.run_readonly_commands`），
+// 「剥首个 . 或 - 前的前缀」式修法会被它截错位；规范化则对任意组合成立，且
+// `send-email` 类连字符裸名也一并覆盖。
 //
 // ⚠️ 词表漏判是**危险方向**（agent#56）：漏判 ⇒ 放行整体重跑 ⇒ 副作用重复执行
 // （邮件重发/报告重发/资金重复转账）；误判只是放弃一次合法重试，代价小得多。
@@ -47,13 +57,32 @@ var MutatingVerbs = map[string]bool{
 //   - Config.NonMutatingTools 豁免集（MCP ReadOnlyHint / curated 白名单为据）；
 //   - Config.MutabilityClassifier 整体接管判定（显式声明优先于一切启发式）。
 func IsMutatingTool(name string) bool {
-	n := strings.ToLower(name)
-	for _, seg := range strings.Split(n, "_") {
+	for _, seg := range splitToolName(name) {
 		if MutatingVerbs[seg] {
 			return true
 		}
 	}
 	return false
+}
+
+// splitToolName 工具名分段：小写后按下划线/点/连字符切分（连续分隔符不产空段）。
+// 分段是**精确**匹配的前提——子串匹配会把 use_skill（含 kill）、get_running_config
+// （含 run）误判成变更类（agent#45），切分只改分隔符全集、不退回子串。
+func splitToolName(name string) []string {
+	return strings.FieldsFunc(strings.ToLower(name), func(r rune) bool {
+		return r == '_' || r == '.' || r == '-'
+	})
+}
+
+// bareToolName 剥离 `server.` 命名空间前缀后的小写裸名（无 `.` 前缀时原样小写）。
+// MCP 规范名为 `server.工具名`（Config.ToolAliases 契约），模型两种写法都可能发；
+// 豁免集常按裸名填充，规范名调用要剥前缀才能命中（agent#90）。
+func bareToolName(name string) string {
+	n := strings.ToLower(name)
+	if i := strings.IndexByte(n, '.'); i >= 0 {
+		return n[i+1:]
+	}
+	return n
 }
 
 // SideEffectTracker 观测一次 agent 运行中是否调用过变更类工具（事件回调包装器，
@@ -69,6 +98,11 @@ type SideEffectTracker struct {
 }
 
 // Observe 处理一个运行事件（接 OnEvent 回调）。
+//
+// 豁免集查找按工具名的两种形态归一比对（agent#90）：模型发的原样名、小写名、
+// 以及剥掉 `server.` 前缀后的小写裸名——MCP 规范名为 `server.工具名`，模型可能
+// 发规范名也可能发裸名，豁免集常按裸名填充，只做 exact/小写 exact 查找时规范名
+// 调用会整类失配（守卫对已豁免的只读工具误报变更类，白白挡死合法重试）。
 func (t *SideEffectTracker) Observe(ev Event) {
 	if ev.Type != EventToolCall {
 		return
@@ -77,7 +111,7 @@ func (t *SideEffectTracker) Observe(ev Event) {
 	if t.classifier != nil {
 		mutating = t.classifier(ev.Tool) // 显式判定整体接管（含豁免语义）
 	} else {
-		if t.exempt[ev.Tool] || t.exempt[strings.ToLower(ev.Tool)] {
+		if t.exempt[ev.Tool] || t.exempt[strings.ToLower(ev.Tool)] || t.exempt[bareToolName(ev.Tool)] {
 			return
 		}
 		mutating = IsMutatingTool(ev.Tool)

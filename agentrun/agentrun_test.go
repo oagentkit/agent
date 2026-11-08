@@ -31,6 +31,10 @@ type mockResponse struct {
 	// status 非 0 时直接以该 HTTP 状态码回错（模型调用失败形态——区别于
 	// 「预算耗尽」：前者是上游故障，后者是配置配小了，判据必须能分开）。
 	status int
+	// retryAfter status 回错时附带的 Retry-After 头（秒数原文，空=不带）：
+	// 429 + Retry-After 形态，经 llm 侧 CaptureRetryAfter 传输层写进 ctx sink，
+	// 供重试门控（agent#91）用例驱动真实 sink 写入路径。
+	retryAfter string
 }
 
 type mockToolCall struct {
@@ -71,6 +75,9 @@ func newMockOpenAI(t *testing.T, responses ...mockResponse) (*mockOpenAI, *opena
 
 		// 上游故障形态：不回 200，让 openai 客户端报错（模型调用失败）
 		if resp.status != 0 {
+			if resp.retryAfter != "" {
+				w.Header().Set("Retry-After", resp.retryAfter)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(resp.status)
 			_, _ = w.Write([]byte(`{"error":{"message":"upstream boom","type":"server_error"}}`))
