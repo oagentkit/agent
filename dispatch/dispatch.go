@@ -37,11 +37,22 @@ type EdgeSource interface {
 // Guard 派发守卫：构建期物化 allow 矩阵，运行期只读。
 type Guard struct {
 	allow    map[string]map[string]struct{}
-	maxDepth int
+	maxDepth int // 必须 >0（NewGuard 构造期校验）
 }
 
 // NewGuard 从边来源构建守卫。
+//
+// maxDepth 必须 >0，零值/负值在构造期 panic（agent#89）：派发深度上限是宿主的
+// 显式配置，漏配不静默——此前 maxDepth<=0 时守卫照常构造，运行期所有派发（含
+// 矩阵内合法边）统一被 Assert 判 depth_exceeded，症状文案指向「深度超限」而非
+// 「配置缺失」，且审计侧会把每次拒绝当真实限深事件记录（污染限深画像）。同函数
+// 对矩阵环已 fail-fast panic，深度零值同为装配错误，风格一致；「零值视为不设限」
+// 与本包白名单默认拒绝的姿态相悖（无界派发深度正是深度上限要防的失控面），不做。
+// 合法配置需 ≥1（depth 从 0 起：maxDepth=1 允许一层派发）。
 func NewGuard(src EdgeSource, maxDepth int) *Guard {
+	if maxDepth <= 0 {
+		panic(fmt.Sprintf("dispatch: maxDepth=%d 非法（必须 >0）——深度上限是宿主显式配置，漏配会让所有派发运行期静默判 depth_exceeded", maxDepth))
+	}
 	g := newGuardNoCycleCheck(src, maxDepth)
 	// allow 矩阵环检测（第十轮重构机会 2 落地）：a→b→a 乒乓环此前全靠宿主
 	// 深度计数自觉拦截——漏递增即无限派发。构造期对矩阵跑 DFS 环检测，
