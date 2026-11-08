@@ -60,9 +60,16 @@ const MinIterationsForToolRound = 2
 // ErrIterationBudgetExhausted 迭代预算耗尽（MaxIterations 次模型调用已用完）。
 //
 // 与「模型调用失败」是两回事，必须能分开判：前者是**预算配小了**（调大重跑即可，
-// 且往往说明任务确实需要更多轮），后者是模型/网关故障（重试同样的预算是合理的）。
-// 判据是**确定性计数**——reactHandler 数到的 assistant 消息数（= 模型调用次数）
-// 达到预算，而不是匹配错误文本（eino 的文案属于上游实现细节，改一个字就失效）。
+// 且往往说明任务确实需要更多轮），后者是模型/网关/工具故障（重试同样的预算是
+// 合理的——调大预算重跑只会放大成本并掩盖真实根因）。
+//
+// 判据是**成因分类**而不是计数（agent#88）：eino 对「预算用尽后的下一次模型
+// 调用」以哨兵错误 adk.ErrExceedMaxIterations 明确拒绝——drain 错误链能
+// errors.Is 判别到它才算预算耗尽。不能用「数出来的 assistant 消息数达到预算」
+// 当判据：数到 budget 恰好说明「末轮模型已发出 tool_calls」，此时工具执行失败
+// （MCP 超时/ToolsNode 报错）同样满足该计数，任何工具故障都会被盖上预算耗尽的
+// 帽子，把消费方引向「调大预算重跑」的错误处置。也不匹配错误文案——那是上游
+// 实现细节，改一个字判据就静默失效；哨兵值是 eino 的公开 API，随库升级稳定。
 var ErrIterationBudgetExhausted = errors.New("agentrun: 迭代预算耗尽（MaxIterations 次模型调用已用完）")
 
 // iterationBudgetError 预算耗尽标记：Error()/Unwrap() **逐字透传**原错误
@@ -132,7 +139,8 @@ type Config struct {
 	// 首轮调过变更类工具后失败不再重跑——重复副作用风险，如实上抛交调用方降级）。
 	// 只读/幂等工具场景可置 true 恢复无条件重试。
 	RetryAfterMutation bool
-	// NonMutatingTools 工具名豁免集（键=工具名，小写归一比对）：表内工具即使命中
+	// NonMutatingTools 工具名豁免集（键=工具名，裸名与 `server.工具名` 规范名皆可
+	// 填——查找按原样/小写/剥前缀裸名三形态归一比对，agent#90）：表内工具即使命中
 	// 动词段启发式也不计变更类。消费方以 MCP ReadOnlyHint 注解/curated 白名单为据
 	// 填充——动词启发式对 run_readonly_command 类「run*」只读执行器命名误报，实弹
 	// （bianque 429 限流轮）首轮合法只读采集即挡死整轮重试，专家失败收场。
@@ -258,7 +266,10 @@ func WithOnEvent(fn func(Event)) RunOption {
 // WithRetry 失败回喂重试一次：首次失败（或产出空文本）时以 retryQuery 再跑，
 // 两次均失败返回末次错误。副作用守卫：首轮已调用变更类工具（见
 // IsMutatingTool）后不整体重跑，除非 Config.RetryAfterMutation=true——重跑会
-// 重复副作用（脚本执行/服务操作类工具在首轮已生效）。
+// 重复副作用（脚本执行/服务操作类工具在首轮已生效）。429 服务端退避建议
+// （Retry-After，经 llm.WithRetryAfterSink sink 透出）**仅限流失败采信**：等待
+// 后重试或建议超钳制（>5min）时不重跑——非限流失败不受陈旧建议影响照常重试
+// （agent#91，sink 不随尝试清除，门控归本重试策略）。
 // ⚠ retryQuery 是**完整替换** query 而非追加（2026-09-19 bianque 实弹教训：
 // 消费者若传纯提示语，重试轮将丢失全部任务材料——工单/合议上下文全空，模型
 // 输出「未收到输入」类空心合规报告）。消费方应传 query+提示语的拼接串。
@@ -300,15 +311,28 @@ func runWithRetry(ctx context.Context, cfg Config, query, retryQuery string, onE
 	// 原地等待与立即重跑都没有意义——返回首轮错误交调用方/failover 处置（此前
 	// SelectRetryDelay 返回 0 时跳过等待但照常立即重跑，恰是注释论证过要避免的
 	// 动作；第六轮审计）。
-	if hint := llm.RetryAfterFrom(ctx); hint > 0 {
-		if wait := llm.SelectRetryDelay(0, hint); wait > 0 {
-			select {
-			case <-ctx.Done():
-				return "", ctx.Err()
-			case <-time.After(wait):
+	//
+	// ⚠️ 仅当本次失败确为限流才采信（agent#91）：sink 不随尝试清除（httpjson
+	// retryafter.go 明言「sink 不随尝试清除：仅对本次失败确为限流的场景采信……
+	// 门控归调用方的重试策略」），而 sink 每 run 仅一份——Config.Model 挂
+	// FailoverModel 时链节 HTTP client 的 RetryAfterTransport 会把被 failover
+	// 吸收的中途 429 建议写进 sink，运行继续后末次失败往往与限流无关（空终稿/
+	// 工具故障），不分成因的采信会污染重试决策：建议超钳制时直接吞掉重试（返回
+	// 首轮错误）、未超钳制则先白等一轮再重跑一个与限流无关的失败。分类判据与
+	// llm 自家重试环同门控（ClassifyLLMError：结构化状态码 + 文本 marker），
+	// sink 内的陈旧建议只对「本次失败也是限流」的后续尝试仍然可见——那正是
+	// 「最近一次 429 建议」语义合理的场景。
+	if llm.IsRateLimitError(err) {
+		if hint := llm.RetryAfterFrom(ctx); hint > 0 {
+			if wait := llm.SelectRetryDelay(0, hint); wait > 0 {
+				select {
+				case <-ctx.Done():
+					return "", ctx.Err()
+				case <-time.After(wait):
+				}
+			} else {
+				return "", err // 建议超钳制：超长限流窗口，不原地重跑
 			}
-		} else {
-			return "", err // 建议超钳制：超长限流窗口，不原地重跑
 		}
 	}
 	// 思考救回（v0.14.7）：首跑失败但分析已（部分）完成时，把末轮思考附进重试
@@ -373,10 +397,14 @@ func run(ctx context.Context, cfg Config, query string, onEvent func(Event)) (st
 	err = drainEvents(iter, "agent", h.handle)
 	if err != nil {
 		werr := err
-		// 预算耗尽 vs 模型调用失败：前者是配置配小了，后者是上游故障，重跑策略
-		// 不同（agent#60）。判据是**数出来的** assistant 消息数，不是匹配 eino
-		// 的错误文案——文案是上游实现细节，改一个字判据就失效。
-		if h.modelCalls >= budget {
+		// 预算耗尽 vs 上游故障：前者是配置配小了，后者是模型/网关/工具故障，重跑
+		// 策略不同（agent#60）。判据是**成因分类**：eino 拒绝预算外的下一次模型
+		// 调用时以公开哨兵 adk.ErrExceedMaxIterations 报错，错误链 errors.Is 可判；
+		// 此前用「数出来的 assistant 消息数 >= 预算」——但数到 budget 恰好说明末轮
+		// 模型已发 tool_calls，随后的工具执行失败（MCP 超时/ToolsNode 报错）同样
+		// 满足该计数，被误标成预算耗尽会把消费方引向「调大预算重跑」（agent#88：
+		// 重放整轮采集放大成本、掩盖真实根因）。
+		if errors.Is(err, adk.ErrExceedMaxIterations) || h.modelCalls > budget {
 			werr = &iterationBudgetError{err: err}
 		}
 		// 运行错误（迭代耗尽/LLM 调用失败等）同样携带末轮思考——重试侧救回的
@@ -465,8 +493,10 @@ type reactHandler struct {
 	// FinalMissingError 携带它供重试侧附档，见 salvageSection）。
 	lastReasoning string
 	// modelCalls 收到的 assistant 消息数 = 模型调用次数（一轮生成一条）。
-	// 它是「预算是否耗尽」的**确定性**判据（agent#60）：MaxIterations 计的就是
-	// 这个量，自己数出来就不必去匹配 eino 的 `exceeds max iterations` 文案。
+	// MaxIterations 计的就是这个量（agent#60）。它**不再单独**当「预算是否耗尽」
+	// 的判据（agent#88：数到 budget 只说明末轮模型已发 tool_calls，随后的工具
+	// 失败同样满足该计数）——预算耗尽以 eino 哨兵 ErrExceedMaxIterations 分类，
+	// 计数仅保留防御判据（异常超出预算仍打标）。
 	modelCalls int
 }
 
