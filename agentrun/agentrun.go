@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cloudwego/eino/adk"
@@ -552,14 +553,25 @@ func (h *reactHandler) handle(mv *adk.MessageVariant) error {
 // 分片不携带 tool_calls，会先行外发）。tool 角色结果流不外发增量，静默收流。
 // 返回 concat 后的完整消息，交回既有完整消息逻辑。
 func (h *reactHandler) streamDeltas(mv *adk.MessageVariant) (*schema.Message, error) {
+	// eino 契约（schema/stream.go）：「the reader must be closed exactly once
+	// (whether the loop finishes normally or exits early via break or return)」，
+	// 且 Close 不幂等（裸 Pipe 流 double-close 会 panic）。此前只有 Recv 错误
+	// 路径关流——干净 EOF break、零分片与 concat 错误 return 三条路径全漏
+	// （oagentkit/agent#77，与 llm#80 同缺陷形态，llm v0.21.0 发版注记点名
+	// 移交本仓）。ADK 事件流是 Copy 扇出的子副本——子流不 Close，父流
+	// closedNum 永不收口，上游生产者 goroutine 挂死在 Send 上。defer +
+	// sync.Once：EOF/错误/取消/panic 全部退出路径恰好关一次——once 兜住
+	// Close 不幂等（Recv 错误路径不再手动关），defer 兜住 panic 路径。
+	var closeOnce sync.Once
+	sr := mv.MessageStream
+	defer func() { closeOnce.Do(func() { sr.Close() }) }()
 	var chunks []*schema.Message
 	for {
-		chunk, err := mv.MessageStream.Recv()
+		chunk, err := sr.Recv()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			mv.MessageStream.Close()
 			return nil, fmt.Errorf("agentrun: 流式消息接收失败: %w", err)
 		}
 		if chunk == nil {
