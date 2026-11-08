@@ -2,6 +2,33 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.14.4] — 2026-11-08
+
+### 修复(agentrun)：streamDeltas 全部退出路径 exactly-once Close 流（#77）
+
+eino 契约（schema/stream.go）：reader 必须恰好 Close 一次——无论循环正常
+结束还是 break/return 提前退出；且 Close 不幂等（裸 Pipe 流 double-close
+会 panic）。streamDeltas 此前只有 Recv 错误路径关流，干净 EOF break、零
+分片与 concat 错误 return 三条路径全漏——与 llm#80 同缺陷形态（llm
+v0.21.0 发版注记点名移交本仓）。ADK 事件流是 Copy 扇出的子副本：子流不
+Close 则父流 closedNum 永不收口，上游生产者 goroutine 挂死在 Send 上；
+每个流式轮次还滞留一个未关副本。
+修法：defer + sync.Once——EOF/错误/取消/panic 全部退出路径恰好关一次，
+once 兜住 Close 不幂等（Recv 错误路径的手动关流移除，统一由 once 收口），
+defer 兜住 panic 路径。
+失败测试先行（Copy(2) 扇出桩，llm#80 同款探针——已关子流再 Recv 报
+ErrRecvAfterClosed，未关子流恒可重复 Recv 出缓存 io.EOF）：
+TestStreamDeltasClosesOnEveryExitPath 钉住四条退出路径
+① 干净 EOF（正常完成）② 零分片（agent#46 形态）
+③ Recv 错误（回归不退化）  ④ concat 错误（分片角色不一致）。
+close #77
+
+- 杂务(deps)：依赖地板追到最新——github.com/oagentkit/llm v0.21.4
+
+llm v0.21.4（WithRateLimitRetry 模型级 429 退避装饰，llm#100）落地，地板同步追平。
+兼容性实测：go build / go vet / go test -race -count=1 ./... 全绿，go mod tidy -diff 无漂移。
+
+
 ## [v0.14.3] — 2026-11-08
 
 - 杂务(deps)：依赖地板追到最新——github.com/oekit/logx v0.8.10
