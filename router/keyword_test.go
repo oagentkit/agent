@@ -2,6 +2,7 @@ package router
 
 import (
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -110,17 +111,65 @@ func TestKeywordHitBoundaryExcept(t *testing.T) {
 	}
 }
 
-// TestOnNegationHitHook 观测钩子：否定作废瞬间触发，零命中不触发。
+// TestOnNegationHitHook 观测钩子：否定作废瞬间触发，零命中不触发；
+// 注销（nil）后不再触发（agent#168：注册面走 SetOnNegationHit 原子快照）。
 func TestOnNegationHitHook(t *testing.T) {
-	prev := OnNegationHit
-	defer func() { OnNegationHit = prev }()
+	SetOnNegationHit(nil)
+	defer SetOnNegationHit(nil)
 
 	hits := 0
-	OnNegationHit = func() { hits++ }
+	SetOnNegationHit(func() { hits++ })
 	KeywordHit(strings.ToLower("没有磁盘问题"), "磁盘")
 	KeywordHit(strings.ToLower("磁盘正常"), "磁盘")
 	if hits != 1 {
 		t.Fatalf("否定作废钩子应恰触发 1 次: %d", hits)
+	}
+	SetOnNegationHit(nil)
+	hits = 0
+	KeywordHit(strings.ToLower("没有磁盘问题"), "磁盘")
+	if hits != 0 {
+		t.Fatalf("注销后钩子不应触发: %d", hits)
+	}
+}
+
+// TestOnNegationHitConcurrentSwap 并发注册/注销与热路径回调不构成 data race
+// （agent#168 / oagentkit/agentkit#168 的上游收口）：读者取到的任一快照都完整
+// 有效。-race 下跑。
+func TestOnNegationHitConcurrentSwap(t *testing.T) {
+	SetOnNegationHit(nil)
+	defer SetOnNegationHit(nil)
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	hits := make(chan int, 1)
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			n := 0
+			for {
+				select {
+				case <-stop:
+					hits <- n
+					return
+				default:
+					KeywordHit(strings.ToLower("没有磁盘问题"), "磁盘")
+					n++
+				}
+			}
+		}()
+	}
+	for i := range 200 {
+		SetOnNegationHit(func() {})
+		if i%2 == 0 {
+			SetOnNegationHit(nil)
+		}
+	}
+	close(stop)
+	wg.Wait()
+	close(hits)
+	for range 4 {
+		<-hits
 	}
 }
 
