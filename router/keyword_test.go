@@ -141,7 +141,7 @@ func TestOnNegationHitConcurrentSwap(t *testing.T) {
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
-	hits := make(chan int, 1)
+	hits := make(chan int, 4) // 4 个读者 goroutine 各发 1 次——容量不足会在 close(stop) 后死锁
 	for range 4 {
 		wg.Add(1)
 		go func() {
