@@ -9,6 +9,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -149,6 +150,9 @@ func New(cfg *Config) (*Router, error) {
 // 门槛自守：分类合法性（结果不在路由表，含 "none"）与 MinConfidence 置信度下限
 // 在本方法统一校验，未过门槛返回携带原因的错误（Decision 仍返回，供调用方可观测）——
 // 只取 Classify 的编排器与 Do 分发共用同一闸门，不会出现"配置了阈值但没人校验"的死配置。
+// 决策面采纳路径同样过这两道闸（oagentkit/agent#107）：决策面自带 decMinCF（其
+// 自有口径），但**全局 MinConfidence 与路由表校验不豁免**——采纳即分发，非法
+// 路由名/低于全局门槛的结果不得绕过 LLM 面要过的同一闸门直达分发面。
 // 配置了 Slots 时同一调用顺带提取槽位（提示词追加槽位说明；模型未给的槽位不出现在结果里，
 // 未配置的槽位名一律丢弃——槽位提取失败不影响选路本身）。
 func (r *Router) Classify(ctx context.Context, input string) (Decision, error) {
@@ -157,6 +161,13 @@ func (r *Router) Classify(ctx context.Context, input string) (Decision, error) {
 	// 判定面是加速件，**不得阻断主链**）。
 	if r.decFace != nil {
 		d, derr := r.classifyByDecisionFace(ctx, input)
+		// 全局面复检（agent#107）：classifyByDecisionFace 只过决策面自己的
+		// decMinCF 与路由表；全局 MinConfidence 是另一道闸（两个门槛语义不同
+		// ——全局门槛约束**所有来源**的采纳，决策面门槛只约束决策面自身的
+		// 置信口径），NaN 也在此拦下（clamp01 不拦 NaN：NaN < 阈值恒假）。
+		if derr == nil {
+			derr = r.globalGate(d)
+		}
 		if derr == nil && !r.decShadow {
 			r.observeDecision(d, nil)
 			return d, nil
@@ -196,13 +207,24 @@ func (r *Router) Classify(ctx context.Context, input string) (Decision, error) {
 	d.Route = strings.ToLower(strings.TrimSpace(d.Route))
 	d.Confidence = clamp01(d.Confidence) // LLM 幻觉防护：越界置信度统一钳位
 	d.Slots = sanitizeSlots(d.Slots, r.slotByName)
-	if _, ok := r.byName[d.Route]; !ok {
-		return d, fmt.Errorf("router: 分类结果 %q 不在路由表", d.Route)
-	}
-	if r.minCF > 0 && d.Confidence < r.minCF {
-		return d, fmt.Errorf("router: 置信度 %.2f 低于阈值 %.2f", d.Confidence, r.minCF)
+	if err := r.globalGate(d); err != nil {
+		return d, err
 	}
 	return d, nil
+}
+
+// globalGate 全局门槛（路由表合法性 + 全局 MinConfidence，agent#107）：
+// LLM 面与决策面采纳路径共用同一道闸——「门槛自守」承诺对两个判定面同时成立。
+// NaN 置信度在此拦下：clamp01 不拦 NaN（NaN < 阈值恒假），NaN 穿过置信门槛
+// 即静默采纳。
+func (r *Router) globalGate(d Decision) error {
+	if _, ok := r.byName[d.Route]; !ok {
+		return fmt.Errorf("router: 分类结果 %q 不在路由表", d.Route)
+	}
+	if r.minCF > 0 && (d.Confidence < r.minCF || math.IsNaN(d.Confidence)) {
+		return fmt.Errorf("router: 置信度 %.2f 低于阈值 %.2f", d.Confidence, r.minCF)
+	}
+	return nil
 }
 
 // slotValueCap 单个槽位值长度上限（LLM 幻觉防护：槽位值是短枚举/布尔，不是内容字段）。
