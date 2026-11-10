@@ -114,19 +114,18 @@ func ValidateTermsStrict(entries []Entry) error {
 
 // OrdinalIndex 解析回答里的序数指代（第一个/第1个/第 2 个/1./选项二/选一），返回 1-based
 // 序号。汉字与阿拉伯数字双形态；仅当剥离序数构式后剩余部分为空、整体就是序数指代时
-// 命中（「1个进程在跑」这类普通句子不误伤）。
+// 命中（「1个进程在跑」这类普通句子不误伤）。前缀/后缀剥离都循环至不动点
+// （oagentkit/agent#108）：中文回答常态带尾句读，「第一个。」「第1个、」是
+// 「序数词缀 + 尾标点」双层后缀——单遍过表只剥一层，整类形态解析失败后被
+// 当「换话题」丢弃。
 func OrdinalIndex(lower string) (int, bool) {
 	s := strings.TrimSpace(lower)
 	if s == "" {
 		return 0, false
 	}
 	s = strings.ReplaceAll(s, " ", "")
-	for _, p := range []string{"选项", "选", "第"} {
-		s = strings.TrimPrefix(s, p)
-	}
-	for _, suf := range []string{"个", "选项", "方案", "的", ".", "。", "、"} {
-		s = strings.TrimSuffix(s, suf)
-	}
+	s = trimPrefixLoop(s, []string{"选项", "选", "第"})
+	s = trimSuffixLoop(s, []string{"个", "选项", "方案", "的", ".", "。", "、"})
 	if utf8.RuneCountInString(s) != 1 {
 		return 0, false
 	}
@@ -135,6 +134,32 @@ func OrdinalIndex(lower string) (int, bool) {
 	r, _ := utf8.DecodeRuneInString(s)
 	n, ok := digits[r]
 	return n, ok
+}
+
+// trimPrefixLoop 逐前缀循环剥离至不动点（表任一前缀不再命中即止）。
+func trimPrefixLoop(s string, prefixes []string) string {
+	for changed := true; changed; {
+		changed = false
+		for _, p := range prefixes {
+			if t := strings.TrimPrefix(s, p); t != s {
+				s, changed = t, true
+			}
+		}
+	}
+	return s
+}
+
+// trimSuffixLoop 逐后缀循环剥离至不动点（表任一后缀不再命中即止）。
+func trimSuffixLoop(s string, suffixes []string) string {
+	for changed := true; changed; {
+		changed = false
+		for _, suf := range suffixes {
+			if t := strings.TrimSuffix(s, suf); t != s {
+				s, changed = t, true
+			}
+		}
+	}
+	return s
 }
 
 // negWords 否定前缀词表：答案以这些否定词**直接拼接**选项词时构成该选项的否定
@@ -193,7 +218,12 @@ func ResolveAnswer(options []string, fallback, answer string) (picked string, is
 	}
 	// 第二轮：宽松 Contains；否定前缀形态（「不是」「不同意」「不可以」……）的
 	// 选项被否决，不经子串命中。negIdx/negCount 记录被否决的选项供二元翻转。
+	// 取**最长**命中而非声明序首个（oagentkit/agent#109）：泛词在前是本包
+	// 推荐的声明序（specific 词条须声明在泛词之前），「请删除数据库」曾按
+	// 声明序命中先声明的「删除」——精确轮修掉的截胡形态在带前缀的回答里
+	// 复发。全部命中后取最长（否定判定照旧对最终候选做）。
 	negIdx, negCount := -1, 0
+	best := -1
 	for i, so := range stripped {
 		if so == "" || !strings.Contains(a, so) {
 			continue
@@ -205,7 +235,12 @@ func ResolveAnswer(options []string, fallback, answer string) (picked string, is
 			negCount++
 			continue
 		}
-		return options[i], false, true
+		if best < 0 || utf8.RuneCountInString(so) > utf8.RuneCountInString(stripped[best]) {
+			best = i
+		}
+	}
+	if best >= 0 {
+		return options[best], false, true
 	}
 	// 二元否定翻转：恰有两个选项且恰好一个被否定形态否决时，答案指向另一个；
 	// 多个选项同被否定（歧义）或选项数 ≠2 时不翻转。
