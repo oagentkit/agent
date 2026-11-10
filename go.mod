@@ -1,6 +1,6 @@
 module github.com/oagentkit/agent
 
-go 1.26.0
+go 1.24.0
 
 require (
 	github.com/cloudwego/eino v0.9.21
@@ -45,6 +45,6 @@ require (
 	github.com/yargevad/filepathx v1.0.0 // indirect
 	golang.org/x/arch v0.11.0 // indirect
 	golang.org/x/exp v0.0.0-20230713183714-613f0c0eb8a1 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/sys v0.29.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 )
