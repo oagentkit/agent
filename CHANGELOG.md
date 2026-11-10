@@ -19,6 +19,15 @@
 测试按 issue 号命名新增 3 条回归用例；全仓 go test ./... 全绿。
 Co-authored-by: Murphy-Yi <zhangyi@Murphy-YideMac-Mini.local>
 
+- 杂务(deps)：依赖地板追到最新——github.com/oekit/pkg v0.44.0
+
+* test(agentrun): Retry-After 用例对齐 pkg#363 语义——传输层透传、采信归 SelectRetryDelay
+pkg v0.44.0（#363）撤销 v0.42 的传输层弃置（#343）：超上限建议原样进 sink，
+SelectRetryDelay 判定超钳制 → 门控不重跑（calls=1，原用例恢复）。地板锁
+pkg v0.44+，语义由地板保证。
+---------
+Co-authored-by: Murphy-Yi <zhangyi@Murphy-YideMac-Mini.local>
+
 - 杂务(deps)：依赖地板追到最新——llm v0.21.9 / textx v0.10.8（2026-11-11 列车收官）
 
 Co-authored-by: Murphy-Yi <zhangyi@Murphy-YideMac-Mini.local>
