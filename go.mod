@@ -34,7 +34,7 @@ require (
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/oekit/concurrency v0.33.0 // indirect
 	github.com/oekit/logx v0.9.2 // indirect
-	github.com/oekit/pkg v0.43.0 // indirect
+	github.com/oekit/pkg v0.44.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.9 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rogpeppe/go-internal v1.8.1 // indirect
