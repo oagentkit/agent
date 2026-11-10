@@ -2,6 +2,40 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.14.9] — 2026-11-11
+
+### 修复(router,clarify)：三单清零——决策面全局闸、序数双层后缀、Contains 最长匹配（#107 #108 #109）
+
+- #107 决策面采纳前补全局闸（路由表合法性 + 全局 MinConfidence，收口
+  globalGate 单源供 LLM/决策两面共用）——「门槛自守」承诺对两个判定面
+  同时成立，非法路由/低置信结果不再绕过 LLM 面要过的同一闸门直达分发面；
+  NaN 置信度在闸内拦截（clamp01 不拦 NaN：NaN < 阈值恒假）
+- #108 OrdinalIndex 前缀/后缀剥离循环至不动点（trimPrefixLoop/
+  trimSuffixLoop）——「第一个。」「第1个、」双层后缀整类解析失败后用户
+  明确选择被当换话题丢弃的形态修掉；普通句子不误伤语义保持
+- #109 ResolveAnswer Contains 轮收集全部命中取最长——泛词在前（本包推荐
+  声明序）时短选项截胡带前缀回答的形态修掉（精确轮修掉的截胡在宽松轮
+  复发）；否定判定与二元翻转照旧对最终候选做
+测试按 issue 号命名新增 3 条回归用例；全仓 go test ./... 全绿。
+Co-authored-by: Murphy-Yi <zhangyi@Murphy-YideMac-Mini.local>
+
+- 杂务(deps)：依赖地板追到最新——github.com/oagentkit/textx v0.10.7
+
+| 依赖 | 现地板 | 抬到 |
+|---|---|---|
+| `github.com/oagentkit/textx` | `v0.10.6` | `v0.10.7` |
+| `github.com/oekit/concurrency` | `v0.31.1` | `v0.31.2` |
+| `github.com/oekit/logx` | `v0.9.0` | `v0.9.1` |
+## 为什么
+矩阵的**发版时刻地板时效**门禁（`verify_tag_floor --ref HEAD`）要求：各仓 HEAD
+（= 下次发版会发出去的内容）的依赖地板，相对那一刻的依赖最新版本，不能已落后。
+oekit 基座与矩阵模块都在高频发版 ⇒ 地板是**跑步机**，落后一格就会判红。
+## 兼容性实测
+本工具在提交前跑完 `go build` / `go vet` / `go test -race -count=1 ./...`（全绿才提交）
+与 `go mod tidy -diff`（无漂移）⇒ 改动**只影响依赖版本**，零行为差异。
+只改 `go.mod` / `go.sum` ⇒ 不需要 CHANGELOG 条目（版本段由下次发版的 `prewrite` 生成）。
+
+
 ## [v0.14.8] — 2026-11-10
 
 ### 修复(router)：否定钩子原子快照——热路径无锁读（agentkit#168 上游收口）
