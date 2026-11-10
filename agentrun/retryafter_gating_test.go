@@ -75,20 +75,24 @@ func TestWithRetryIgnoresStaleRetryAfterForNonRateLimitFailure(t *testing.T) {
 	}
 }
 
-// TestWithRetryStillSkipsRerunOnHugeRateLimitHint 正向保留：本次失败**确为限流**
-// 且建议超钳制（700s > 5min）——超长限流窗口原地重跑没有意义，不重试（既有行为，
-// agent#91 门控不得把这条也放开）。
-func TestWithRetryStillSkipsRerunOnHugeRateLimitHint(t *testing.T) {
+// TestHugeRateLimitHintDiscardedAtTransportThenReruns pkg#343 语义对齐（oekit/pkg
+// v0.42.0 起）：parseRetryAfter 对超钳制（>5min）的建议返回 0——**传输层即弃置**，
+// sink 里根本没有 700s 建议。Run 侧门控（建议超钳制→不重跑，agent#91 纵深防御
+// 保留在 agentrun.go）因此不再被该输入触达：WithRetry 按本地退避重跑一次后仍
+// 如实上抛恒 429 的失败。本用例钉的是新栈语义（建议被弃置 ⇒ 重跑不卡死也不
+// 白等），替代原「建议超钳制时不原地重跑」用例——那条的前提（700s 进 sink）
+// 在当前栈下不可达。
+func TestHugeRateLimitHintDiscardedAtTransportThenReruns(t *testing.T) {
 	m, p := newRateLimitedProvider(t, "700")
 
 	_, err := Run(context.Background(), Config{
 		Name: "test", Instruction: "inst", Model: p.Model(), MaxIterations: 4,
 	}, "分析", WithRetry("带反馈重跑"))
 	if err == nil {
-		t.Fatal("限流失败（建议超钳制）应如实上抛")
+		t.Fatal("恒 429 应如实上抛")
 	}
-	if n := m.calls.Load(); n != 1 {
-		t.Fatalf("建议超钳制时不原地重跑: calls = %d, want 1", n)
+	if n := m.calls.Load(); n != 2 {
+		t.Fatalf("建议被传输层弃置后 WithRetry 应回喂重跑一次（首跑+重跑），实际 calls = %d", n)
 	}
 }
 
