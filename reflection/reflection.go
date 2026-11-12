@@ -47,11 +47,15 @@ type Result struct {
 	// Text 末稿（收敛稿或达上限时的最佳稿）——与 acpx.RunResult.Text、
 	// agentrun.Event.Text 同词表（Text=模型/agent 最终产出文本）。
 	Text string
-	// Rounds 每轮记录（Round[0] = 初稿）。
+	// Rounds 每轮记录（Round[0] = 初稿）。不变式：**Text 恒等于末条
+	// Draft**（三条终止路径同形）——消费方按「Rounds[last] 是交付稿的
+	// 批判留痕」读审计留痕时对得上（agent#127：Stalled 路径此前缺末条，
+	// Text 是未进 Rounds 的重复稿）。
 	Rounds []Round
 	// Converged 是否通过 Rubric 收敛（false = 达到轮次上限返回末稿）。
 	// Stalled 稿差判停提前终止（修订稿与上一稿几乎相同——同稿重发形态，
-	// 再烧轮次无意义；Text 为该重复稿）。
+	// 再烧轮次无意义；Text 为该重复稿，该稿同样记进 Rounds——其批判留痕
+	// 复用上一轮 verdict，本轮未再批判）。
 	Stalled   bool
 	Converged bool
 }
@@ -103,9 +107,17 @@ func Refine(ctx context.Context, cfg *Config) (*Result, error) {
 			return nil, fmt.Errorf("reflection: 第 %d 轮修订失败: %w", i+1, err)
 		}
 		// 稿差判停（第十轮落地，重构机会 3）：修订稿与上一稿几乎相同（同稿
-		// 重发）时继续烧轮次无意义——提前终止，Converged=false 如实标注
+		// 重发）时继续烧轮次无意义——提前终止，Converged=false 如实标注。
+		// 重复稿也是交付的那一稿（Text）⇒ 必须记进 Rounds（agent#127）：
+		// Round 只在批判前记录，此前该重复稿从未进过 Rounds ⇒ Text 与
+		// Rounds 末条脱节，消费方按「末条 = 交付稿」读审计留痕对不上。
+		// 批判留痕复用上一轮 verdict——本轮未再批判，两稿几乎相同（相似度
+		// ≥0.98），该批判对重复稿同样成立（Issues 恰是它没修掉的问题）。
 		if textutil.Similarity(prev, draft) >= 0.98 {
 			res.Stalled = true
+			res.Rounds = append(res.Rounds, Round{
+				Draft: draft, Pass: false, Issues: verdict.Issues, Critique: verdict.Raw,
+			})
 			break
 		}
 	}
