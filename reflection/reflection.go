@@ -9,6 +9,7 @@ package reflection
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/oagentkit/textx/textutil"
 
@@ -154,7 +155,26 @@ func generateDraft(ctx context.Context, client *llm.Client, cfg *Config, prev st
 type critiqueVerdict struct {
 	Pass   bool     `json:"pass"`
 	Issues []string `json:"issues"`
-	Raw    string   `json:"-"`
+	// Raw Critic 原始 JSON（Round.Critique 的审计留痕来源，agent#131）。
+	// 标 json:"-" 不参与常规解码，由 UnmarshalJSON 在解码时截获写入——
+	// 此前全仓无任何赋值点，Round.Critique 恒为空串。
+	Raw string `json:"-"`
+}
+
+// UnmarshalJSON 解码 Critic 输出并留痕原始 JSON（agent#131）：Round.Critique
+// 承诺「Critic 原始 JSON（审计留痕）」，但 Raw 标 json:"-" 且无赋值点 ⇒ 恒空。
+// llm.Client.GenerateJSON 内部走 json.Unmarshal，本方法在此截获本次成功解析的
+// 原始字节（ExtractJSON 提取后的 Critic JSON，去 markdown 围栏口径）写入 Raw。
+// 解码失败不落 Raw——GenerateJSON 会带错误回喂重试，重试成功后以新字节再走本方法。
+func (v *critiqueVerdict) UnmarshalJSON(b []byte) error {
+	type plain critiqueVerdict // 别名化去方法，防递归解码
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	*v = critiqueVerdict(p)
+	v.Raw = string(b)
+	return nil
 }
 
 // critique 按 Rubric 评审草稿。
