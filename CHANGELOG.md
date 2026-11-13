@@ -2,6 +2,36 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.15.0] — 2026-11-13
+
+### 修复(reflection)：Round.Critique 带上 Critic 原始 JSON——Raw 在解码时截获留痕（#131）
+
+- 49f1105
+
+### 修复(router)：MinConfidence/DecisionMinConfidence 值域构造期校验——负值/超 1/NaN fail-fast（#130）
+
+- d7eff95
+
+### 修复(clarify)：否定词表补多字形态——「不是/不同意/不可以 + 选项词」不再被 Contains 误命中（#129）
+
+- 4bf9aa8
+
+### 重构：删 router.OnNegationHit 死写入口——注册一律走 SetOnNegationHit（BREAKING）
+
+`router.OnNegationHit`（否定守门命中钩子的导出 var，agent#168 引入的
+「初始化缺省镜像」）已删除：init 时快照读该 var 的逻辑（init /
+snapshotNegationHook）一并清理。运行时取值一直读 SetOnNegationHit
+维护的原子快照——对本 var 赋值自 agent#168 起就是死写，保留只为了
+编译兼容存量调用方与门面别名。
+## BREAKING：下游要做什么
+| 已删除 | 迁移到 | 迁移示例 |
+|---|---|---|
+| `router.OnNegationHit = fn`（死写） | `router.SetOnNegationHit(fn)` | `router.SetOnNegationHit(fn)`——原子替换、热路径无锁读；传 nil 注销 |
+| `router.OnNegationHit`（读） | 无直接等价物（它本就不反映生效钩子） | 观测语义用 SetOnNegationHit 注册的回调本身表达 |
+本地门禁：go build / go vet / go test ./... 全绿；go mod tidy -diff 无漂移。
+
+- 杂务(deps)：依赖地板追到最新——concurrency v0.35.1 / pkg v0.47.1
+
 ## [v0.14.11] — 2026-11-13
 
 ### 修复(reflection)：Stalled 路径把重复稿记进 Rounds——Text 恒等于末条 Draft，留痕与交付不再脱节（#127）
