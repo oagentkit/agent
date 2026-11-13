@@ -42,33 +42,13 @@ var negPhrases = []string{
 // 否定词与关键词之间的常见修饰间隔。只回看不前看——中文否定习惯前置。
 const negWindow = 15
 
-// OnNegationHit 否定守门命中钩子的**初始化缺省镜像**（agent#168）。
-// 运行时取值读 SetOnNegationHit 维护的原子快照（热路径无锁读，与替换构成
-// 无竞态读写对——包外直写导出 var 不再生效，也不再构成 data race）。
-// 本 var 保留只为编译兼容（门面别名与存量调用方），读写都不反映已生效的钩子。
-//
-// Deprecated: 注册钩子请用 SetOnNegationHit；对本 var 赋值是死写。
-var OnNegationHit func()
-
 // _onNegationHit 生效中的否定钩子快照；nil = 未注册（热路径零开销）。
 var _onNegationHit atomic.Pointer[func()]
 
-func init() { snapshotNegationHook() }
-
-// snapshotNegationHook 用导出 var 的当前值初始化快照。
-// 只在包 init 时跑一次：init 之后 var 就变成文档化缺省镜像（llm#130 同款语义）。
-func snapshotNegationHook() {
-	if OnNegationHit == nil {
-		_onNegationHit.Store(nil)
-		return
-	}
-	f := OnNegationHit
-	_onNegationHit.Store(&f)
-}
-
 // SetOnNegationHit 注册否定守门命中钩子（agent#168：原子替换，热路径无锁读）。
 // 传 nil 注销（与上游「可选钩子」语义一致）。并发注册/注销与热路径回调
-// 构成无竞态读写对——经门面（agentkit/router.SetOnNegationHit）注册走这里。
+// 构成无竞态读写对。历史上的导出 var `OnNegationHit`（初始化缺省镜像，
+// 对它赋值是死写）已随 v0.15.0 删除——注册一律走本函数。
 func SetOnNegationHit(f func()) {
 	if f == nil {
 		_onNegationHit.Store(nil)
