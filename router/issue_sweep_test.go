@@ -1,10 +1,12 @@
 package router
 
 // 2026-11-11 issue 清零战回归测试（#107）：钉住决策面采纳路径的门槛自守。
+// 2026-11-13 清零战役追加（#130）：门槛值域构造期校验。
 
 import (
 	"context"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/oagentkit/llm/llmtest"
@@ -59,5 +61,42 @@ func TestDecisionFaceRespectsGlobalGate_Issue107(t *testing.T) {
 	}
 	if _, cerr3 := r3.Classify(context.Background(), "修 bug"); cerr3 != nil {
 		t.Fatalf("NaN 应被拦（回落 LLM 面成功），实际 err=%v", cerr3)
+	}
+}
+
+// TestNewRejectsOutOfRangeThresholds_Issue130 门槛值域构造期校验：
+// 负值把门槛静默关掉（「置信度 < 负阈值」恒假 ⇒ 低置信度全放行）、
+// 百分比误填 85 让一切分类永远低于门槛（无差别永远 fallback）——
+// 两种配置事故都必须在 New 就报错，不得带病上线（「门槛自守」的值域维度）。
+func TestNewRejectsOutOfRangeThresholds_Issue130(t *testing.T) {
+	stub := func() *llmtest.Model {
+		return &llmtest.Model{RepeatLast: true, Script: []llmtest.Resp{
+			{Content: `{"route":"bug-fix","confidence":0.9,"reason":"ok"}`},
+		}}
+	}
+	cases := []struct {
+		name string
+		cfg  *Config
+	}{
+		{"负值 MinConfidence（手滑 -0.5）", &Config{Model: stub(), Routes: testRoutes(), MinConfidence: -0.5}},
+		{">1 MinConfidence（百分比误填 85）", &Config{Model: stub(), Routes: testRoutes(), MinConfidence: 85}},
+		{"NaN MinConfidence", &Config{Model: stub(), Routes: testRoutes(), MinConfidence: math.NaN()}},
+		{"负值 DecisionMinConfidence", &Config{Model: stub(), Routes: testRoutes(), DecisionMinConfidence: -0.1}},
+		{">1 DecisionMinConfidence", &Config{Model: stub(), Routes: testRoutes(), DecisionMinConfidence: 85}},
+		{"NaN DecisionMinConfidence", &Config{Model: stub(), Routes: testRoutes(), DecisionMinConfidence: math.NaN()}},
+	}
+	for _, c := range cases {
+		if _, err := New(c.cfg); err == nil {
+			t.Errorf("%s 应构造期报错（agent#130）", c.name)
+		} else if !strings.Contains(err.Error(), "须在 [0,1]") {
+			t.Errorf("%s 报错文案应指明值域: %v", c.name, err)
+		}
+	}
+	// 合法值域边界保留：0 = 不设门槛（既有语义），0.5/1 常规值不得误伤。
+	for _, v := range []float64{0, 0.5, 1} {
+		cfg := &Config{Model: stub(), Routes: testRoutes(), MinConfidence: v, DecisionMinConfidence: v}
+		if _, err := New(cfg); err != nil {
+			t.Errorf("MinConfidence=DecisionMinConfidence=%v 应合法: %v", v, err)
+		}
 	}
 }

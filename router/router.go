@@ -48,6 +48,8 @@ type Config struct {
 	// Routes 路由表（≥1 条；Name 唯一）。
 	Routes []Route
 	// MinConfidence 置信度下限（0~1；低于则走 Fallback。0 = 不设门槛）。
+	// 构造期校验值域（agent#130）：负值 / >1 / NaN 直接报错——负值会把
+	// 「置信度 < 阈值」恒置假（门槛被静默关掉，低置信度全放行）。
 	MinConfidence float64
 	// Fallback 兜底处理链（nil = 低置信/无法分类时报错）。
 	Fallback func(ctx context.Context, input string, reason string) (string, error)
@@ -61,6 +63,7 @@ type Config struct {
 	// 不启用时行为与从前**逐字节一致**。
 	DecisionFace DecisionFace
 	// DecisionMinConfidence 决策面置信门槛（0 = 不设；0-1）。未达门槛 ⇒ 回落 LLM 面。
+	// 构造期校验值域（agent#130）：负值 / >1 / NaN 直接报错（与 MinConfidence 同口径）。
 	//
 	// 注意口径**随候选集规模变化**（判定模型的置信度是分布集中度：候选越多、同一
 	// p_top 折出的置信度越低）⇒ 门槛须随候选集标定，不能跨候选集移植。
@@ -105,6 +108,12 @@ func New(cfg *Config) (*Router, error) {
 	if cfg == nil || cfg.Model == nil {
 		return nil, fmt.Errorf("router: Model 不能为空")
 	}
+	if err := checkThreshold("MinConfidence", cfg.MinConfidence); err != nil {
+		return nil, err
+	}
+	if err := checkThreshold("DecisionMinConfidence", cfg.DecisionMinConfidence); err != nil {
+		return nil, err
+	}
 	if len(cfg.Routes) == 0 {
 		return nil, fmt.Errorf("router: Routes 不能为空")
 	}
@@ -144,6 +153,23 @@ func New(cfg *Config) (*Router, error) {
 		decShadow:   cfg.DecisionShadow,
 		decObserver: cfg.DecisionObserver,
 	}, nil
+}
+
+// checkThreshold 门槛值域构造期校验（agent#130）：「门槛自守」承诺此前只覆盖
+// 运行期判定，值域本身不设防——
+//   - 负值（本意 0.5 手滑写成 -0.5）让「置信度 < 阈值」恒假 ⇒ 门槛被静默关掉，
+//     低置信度分类直接分发；
+//   - >1（百分比误填 85）让一切分类永远低于门槛 ⇒ 无差别永远 fallback，
+//     错误要到运行期才以「低于阈值 85.00」的怪异文案暴露；
+//   - NaN 同样拒绝（NaN < 阈值恒假，与负值同为「恒放行」形态；运行期 globalGate
+//     另有 NaN 拦截，构造期先 fail-fast）。
+//
+// 0 = 不设门槛（既有语义保留），与本包「非法值构造期报错」的既有哲学一致。
+func checkThreshold(name string, v float64) error {
+	if math.IsNaN(v) || v < 0 || v > 1 {
+		return fmt.Errorf("router: %s 须在 [0,1]（0 = 不设门槛），got %v", name, v)
+	}
+	return nil
 }
 
 // Classify 意图分类（不执行）。
