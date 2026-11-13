@@ -30,6 +30,21 @@ snapshotNegationHook）一并清理。运行时取值一直读 SetOnNegationHit
 | `router.OnNegationHit`（读） | 无直接等价物（它本就不反映生效钩子） | 观测语义用 SetOnNegationHit 注册的回调本身表达 |
 本地门禁：go build / go vet / go test ./... 全绿；go mod tidy -diff 无漂移。
 
+- 杂务(deps)：依赖地板追到最新——github.com/oekit/pkg v0.47.1 → v0.48.0
+
+| 依赖 | 现地板 | 抬到 |
+|---|---|---|
+| `github.com/oekit/pkg` | `v0.47.1` | `v0.48.0` |
+## 为什么
+矩阵的**发版时刻地板时效**门禁（`verify_tag_floor --ref HEAD`）要求：各仓 HEAD
+（= 下次发版会发出去的内容）的依赖地板，相对那一刻的依赖最新版本，不能已落后。
+oekit 基座与矩阵模块都在高频发版 ⇒ 地板是**跑步机**，落后一格就会判红。
+pkg v0.48.0（2026-11-13 上线）带跨 org Errorf 迁移，本仓跟进地板为 guardx#170
+同批迁移铺路。
+## 兼容性实测
+本工具在提交前跑完 `go build` / `go vet` / `go test ./...`（全绿才提交）
+与 `go mod tidy -diff`（无漂移）⇒ 改动**只影响依赖版本**，零行为差异。
+
 - 杂务(deps)：依赖地板追到最新——concurrency v0.35.1 / pkg v0.47.1
 
 ## [v0.14.11] — 2026-11-13
