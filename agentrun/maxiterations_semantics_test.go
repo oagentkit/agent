@@ -4,9 +4,10 @@ package agentrun
 // （agent#60）。
 //
 // 这组用例的作用不是「测出 bug」，而是把契约的两半各自钉成一个可判定的量：
-//   - 语义：预算 1 + [工具轮, 终稿] 必然失败、预算 2 同脚本必然成功——这是
-//     「1 轮工具要花 2 次调用」的算术下界，谁把 MaxIterations 理解成工具轮数
-//     就必须同时改掉这两条（成对断言，不是单边）；
+//   - 语义：预算 1 配工具在装配期即被拒（agent#144）、预算 2 + [工具轮, 终稿]
+//     必然成功、预算 2 + [工具轮, 工具轮, 终稿] 必然预算耗尽——这是「1 轮工具
+//     要花 2 次调用」的算术下界，谁把 MaxIterations 理解成工具轮数就必须同时
+//     改掉这几条（成对断言，不是单边）；
 //   - 可区分：预算耗尽与上游故障必须能用 errors.Is 分开判——前者调大预算重跑
 //     就对了，后者重试同样预算是合理的。判据是 eino 的公开哨兵
 //     adk.ErrExceedMaxIterations（不是计数也不是文案匹配：计数在「末轮模型已发
@@ -32,24 +33,21 @@ func TestMaxIterationsCountsModelCallsNotToolRounds(t *testing.T) {
 	tc := &mockToolCall{id: "c1", name: "echo", arguments: "{}"}
 	echo := newEchoTool(t)
 
-	// 预算 1：工具轮就花光了，终稿那一次被 eino 拒。
-	_, cm1 := newMockOpenAI(t,
-		mockResponse{toolCall: tc},  // 第 1 次调用：工具轮
-		mockResponse{content: "终稿"}, // 第 2 次调用：终稿
+	// 预算 1 + 工具：装配期直接拒绝（agent#144——#60 的直接防线，不再等运行期
+	// 撞上限）。
+	_, cm0 := newMockOpenAI(t,
+		mockResponse{toolCall: tc},
+		mockResponse{content: "终稿"},
 	)
 	_, err := Run(context.Background(), Config{
-		Name: "test", Instruction: "inst", Model: cm1,
+		Name: "test", Instruction: "inst", Model: cm0,
 		Tools: []tool.BaseTool{echo}, MaxIterations: 1,
 	}, "x")
 	if err == nil {
-		t.Fatal("MaxIterations=1 + [工具轮, 终稿] 必须失败——1 次调用出不了终稿")
+		t.Fatal("MaxIterations=1 + 工具必须装配期失败——1 次调用出不了终稿")
 	}
-	if !errors.Is(err, ErrIterationBudgetExhausted) {
-		t.Fatalf("应判定为预算耗尽（ErrIterationBudgetExhausted），实得 %v", err)
-	}
-	// 文案仍逐字透传 eino 的原错误：既有按文案判断的消费方零感知。
-	if !strings.Contains(err.Error(), "iterations") && !strings.Contains(err.Error(), "iteration") {
-		t.Fatalf("原始错误文案应原样透传（wrapper 只加 errors.Is 语义，不改 Error()），实得 %q", err.Error())
+	if !strings.Contains(err.Error(), "MinIterationsForToolRound") {
+		t.Fatalf("应报 MinIterationsForToolRound 装配期错误，实得 %v", err)
 	}
 
 	// 同一脚本、预算 2：工具轮 + 终稿刚好够。
@@ -66,6 +64,28 @@ func TestMaxIterationsCountsModelCallsNotToolRounds(t *testing.T) {
 	}
 	if out != "终稿" {
 		t.Fatalf("out = %q, want 终稿", out)
+	}
+
+	// 预算 2 + [工具轮, 工具轮, 终稿]：两次工具调用耗尽预算，第三次被 eino 拒
+	// ——每个工具轮都花一次模型调用，计数语义的另一半。
+	_, cm3 := newMockOpenAI(t,
+		mockResponse{toolCall: tc},
+		mockResponse{toolCall: tc},
+		mockResponse{content: "终稿"},
+	)
+	_, err = Run(context.Background(), Config{
+		Name: "test", Instruction: "inst", Model: cm3,
+		Tools: []tool.BaseTool{echo}, MaxIterations: 2,
+	}, "x")
+	if err == nil {
+		t.Fatal("MaxIterations=2 + [工具轮, 工具轮, 终稿] 必须失败——两次工具调用已耗尽预算")
+	}
+	if !errors.Is(err, ErrIterationBudgetExhausted) {
+		t.Fatalf("应判定为预算耗尽（ErrIterationBudgetExhausted），实得 %v", err)
+	}
+	// 文案仍逐字透传 eino 的原错误：既有按文案判断的消费方零感知。
+	if !strings.Contains(err.Error(), "iterations") && !strings.Contains(err.Error(), "iteration") {
+		t.Fatalf("原始错误文案应原样透传（wrapper 只加 errors.Is 语义，不改 Error()），实得 %q", err.Error())
 	}
 }
 
@@ -123,20 +143,22 @@ func newFailingTool(t *testing.T, name string) tool.BaseTool {
 // TestToolFailureAtBudgetIsNotBudgetExhaustion 末轮工具失败不得被误标成预算耗尽
 // （agent#88）。
 //
-// MaxIterations=1：第 1 次（= 最后一次）模型调用返回 tool_calls、随后**工具执行
-// 失败**——此时数出来的模型调用数恰好等于预算，旧判据 `modelCalls >= budget`
-// 会把任何工具故障（MCP 超时/ToolsNode 报错）盖上 ErrIterationBudgetExhausted，
-// 契约文档指示消费方据此「调大预算重跑」——真实根因是工具故障，调大预算重跑
-// 只会重放整轮采集（成本放大）且根因被掩盖。判据必须是成因分类：eino 以公开
-// 哨兵 adk.ErrExceedMaxIterations 拒绝预算外的下一次模型调用，错误链 errors.Is
-// 可判；工具失败不含该哨兵，不得打标。错误文案必须保真透传真实根因。
+// MaxIterations=2：第 1 次模型调用返回 echo 的 tool_calls（成功），第 2 次（=
+// 最后一次）模型调用返回 collect 的 tool_calls、随后**工具执行失败**——此时数
+// 出来的模型调用数恰好等于预算，旧判据 `modelCalls >= budget` 会把任何工具故障
+// （MCP 超时/ToolsNode 报错）盖上 ErrIterationBudgetExhausted，契约文档指示消费
+// 方据此「调大预算重跑」——真实根因是工具故障，调大预算重跑只会重放整轮采集
+// （成本放大）且根因被掩盖。判据必须是成因分类：eino 以公开哨兵
+// adk.ErrExceedMaxIterations 拒绝预算外的下一次模型调用，错误链 errors.Is 可判；
+// 工具失败不含该哨兵，不得打标。错误文案必须保真透传真实根因。
 func TestToolFailureAtBudgetIsNotBudgetExhaustion(t *testing.T) {
 	_, cm := newMockOpenAI(t,
-		mockResponse{toolCall: &mockToolCall{id: "c1", name: "collect", arguments: `{"text":"x"}`}},
+		mockResponse{toolCall: &mockToolCall{id: "c1", name: "echo", arguments: `{"text":"x"}`}},
+		mockResponse{toolCall: &mockToolCall{id: "c2", name: "collect", arguments: `{"text":"x"}`}},
 	)
 	_, err := Run(context.Background(), Config{
 		Name: "test", Instruction: "inst", Model: cm,
-		Tools: []tool.BaseTool{newFailingTool(t, "collect")}, MaxIterations: 1,
+		Tools: []tool.BaseTool{newEchoTool(t), newFailingTool(t, "collect")}, MaxIterations: 2,
 	}, "x")
 	if err == nil {
 		t.Fatal("工具执行失败应报错")

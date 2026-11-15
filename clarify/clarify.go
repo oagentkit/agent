@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io/fs"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -112,9 +113,12 @@ func ValidateTermsStrict(entries []Entry) error {
 	return nil
 }
 
-// OrdinalIndex 解析回答里的序数指代（第一个/第1个/第 2 个/1./选项二/选一），返回 1-based
-// 序号。汉字与阿拉伯数字双形态；仅当剥离序数构式后剩余部分为空、整体就是序数指代时
-// 命中（「1个进程在跑」这类普通句子不误伤）。前缀/后缀剥离都循环至不动点
+// OrdinalIndex 解析回答里的序数指代（第一个/第1个/第 2 个/1./选项二/选一/第10个/
+// 第十个/第二十三个），返回 1-based 序号。汉字与阿拉伯数字双形态；阿拉伯数字支持
+// 多位数、汉字支持 一~九 与 十/二十/二十三 合成形态（agent#147：此前单 rune 限制
+// 让「第10个」及以上序数整类解析失败，选项数 >9 时明确选择被当换话题）。
+// 仅当剥离序数构式后剩余部分为空、整体就是序数指代时命中（「1个进程在跑」
+// 「第10个进程在跑」这类普通句子不误伤）。前缀/后缀剥离都循环至不动点
 // （oagentkit/agent#108）：中文回答常态带尾句读，「第一个。」「第1个、」是
 // 「序数词缀 + 尾标点」双层后缀——单遍过表只剥一层，整类形态解析失败后被
 // 当「换话题」丢弃。
@@ -126,15 +130,70 @@ func OrdinalIndex(lower string) (int, bool) {
 	s = strings.ReplaceAll(s, " ", "")
 	s = trimPrefixLoop(s, []string{"选项", "选", "第"})
 	s = trimSuffixLoop(s, []string{"个", "选项", "方案", "的", ".", "。", "、"})
-	if utf8.RuneCountInString(s) != 1 {
+	return parseOrdinalNumber(s)
+}
+
+// parseOrdinalNumber 把剥离序数构式后的整串解析为 1-based 序号：
+//   - 阿拉伯数字：整串全为 ASCII 数字即成立（多位数，agent#147）；
+//   - 汉字数字：单字 一~九；「十」（10）、「十X」（11-19）、「X十」（20-90）、
+//     「X十Y」（21-99）按十位/个位合成。
+//
+// 非纯数字串（「1个进程在跑」剥缀后的残留句子）返回 false，不误伤普通回答。
+func parseOrdinalNumber(s string) (int, bool) {
+	if s == "" {
 		return 0, false
 	}
-	digits := map[rune]int{'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
-		'1': 1, '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9}
-	r, _ := utf8.DecodeRuneInString(s)
-	n, ok := digits[r]
-	return n, ok
+	allDigits := true
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			allDigits = false
+			break
+		}
+	}
+	if allDigits {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 1 {
+			return 0, false
+		}
+		return n, true
+	}
+	cnDigit := func(r rune) (int, bool) {
+		n, ok := cnDigits[r]
+		return n, ok
+	}
+	if s == "十" { // 单独「十」= 10（cnDigits 只收个位，十位在下方合成）
+		return 10, true
+	}
+	r := []rune(s)
+	switch len(r) {
+	case 1:
+		return cnDigit(r[0])
+	case 2:
+		if r[0] == '十' { // 十X = 10+X
+			if n, ok := cnDigit(r[1]); ok {
+				return 10 + n, true
+			}
+			return 0, false
+		}
+		if r[1] == '十' { // X十 = X*10
+			if n, ok := cnDigit(r[0]); ok {
+				return n * 10, true
+			}
+		}
+	case 3:
+		if r[1] == '十' { // X十Y = X*10+Y
+			tens, ok1 := cnDigit(r[0])
+			ones, ok2 := cnDigit(r[2])
+			if ok1 && ok2 {
+				return tens*10 + ones, true
+			}
+		}
+	}
+	return 0, false
 }
+
+// cnDigits 汉字个位数字表（十位合成见 parseOrdinalNumber）。
+var cnDigits = map[rune]int{'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9}
 
 // trimPrefixLoop 逐前缀循环剥离至不动点（表任一前缀不再命中即止）。
 func trimPrefixLoop(s string, prefixes []string) string {
@@ -163,12 +222,18 @@ func trimSuffixLoop(s string, suffixes []string) string {
 }
 
 // negWords 否定前缀词表：答案以这些否定词**直接拼接**选项词时构成该选项的否定
-// 形态（「不是」对「是」、「不同意删除」对「删除」、「没意见」对「意见」）。
+// 形态（「不是」对「是」、「不同意删除」对「删除」、「没意见」对「意见」、
+// 「not yes」对「yes」、「no thanks」对「thanks」）。
 //
 // 单字与常见**多字**形态都必须在表内（agent#129）：判定是逐词精确拼接
 // （a == neg+opt），缺词时拼接不成立 ⇒ 否定检测落空 ⇒ 第二轮宽松 Contains
 // 把**被否定的选项**命中返回——「不同意删除数据库」曾被消解成「删除数据库」，
 // 用户明确拒绝的操作被选中执行。
+//
+// 英文覆盖（agent#146）：strip 只做 ToLower + 删空格，故英文否定按**无空格
+// 拼接形态**登记（「not yes」→「notyes」= "not"+"yes"）；缩写同时收带撇号与
+// 去撇号两种拼写（撇号不被 strip 删除）。前置否定才在范围内（「I don't think
+// so」这类后置/从句否定仍属宽松 Contains 的既有边界）。
 var negWords = []string{
 	// 单字否定
 	"不", "没", "别", "非", "无", "莫", "勿", "未",
@@ -176,12 +241,20 @@ var negWords = []string{
 	// 多字词若不在表内，「多字否定词 + 选项词」的整串拼接对任何单字词都不成立。
 	"不要", "不用", "没有", "不是", "不会", "不能", "不可以",
 	"不同意", "不需要", "不支持", "不许", "不准", "不让", "未曾",
+	// 英文否定（agent#146）：not yes / no thanks / never yes / don't yes …
+	"not", "no", "never",
+	"dont", "don't", "doesnt", "doesn't", "didnt", "didn't",
+	"cannot", "cant", "can't", "wont", "won't",
+	"wouldnt", "wouldn't", "shouldnt", "shouldn't",
+	"isnt", "isn't", "arent", "aren't", "wasnt", "wasn't", "werent", "weren't",
+	"aint", "ain't",
 }
 
 // isNegatedForm 报告 a（已 strip）是否为否定词直接拼接 opt（已 strip）的否定形态
 // （a == neg+opt，对词表逐词独立判定，与词序/词长无关）。真实覆盖范围：
-//   - 表内否定词（单字 + 多字形态）与选项词的**整串精确拼接**——「不是删除数据库」
-//     对「删除数据库」（agent#129：多字词缺表时拼接落空，被 Contains 误命中）；
+//   - 表内否定词（中英单字 + 多字形态）与选项词的**整串精确拼接**——「不是删除
+//     数据库」对「删除数据库」（agent#129：多字词缺表时拼接落空，被 Contains
+//     误命中）、「notyes」对「yes」（agent#146：纯中文词表让英文否定整体缺席）；
 //   - 「我觉得不是删除数据库」这类**前置填充的松散否定不在范围**——那是宽松
 //     Contains 容错的既有边界，不是本函数的缺口。
 func isNegatedForm(a, opt string) bool {

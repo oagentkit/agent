@@ -54,7 +54,9 @@ const DefaultMaxIterations = 12
 // 不是经验值而是算术下界：1 次调用产出 tool_calls、1 次调用产出终稿 ⇒ 至少 2。
 // 低于它的配置在纯问答下仍能用（1 次调用即终稿），但一旦模型决定调工具就必然
 // 在第二次调用处撞上限（agent#60：MaxIterations=1 + [工具轮, 终稿] 直接整轮失败）。
-// 装配期做 `< MinIterationsForToolRound` 的告警能提前暴露这类配置。
+// 装配期防线由 Config.Validate 兜住（agent#144）：配置了工具（Tools/ToolsFactory）
+// 且 MaxIterations 低于本常量时在 run 第一行直接拒绝；未配工具的纯问答路径不受
+// 限制（保留 MaxIterations=1 的能力）。
 const MinIterationsForToolRound = 2
 
 // ErrIterationBudgetExhausted 迭代预算耗尽（MaxIterations 次模型调用已用完）。
@@ -225,13 +227,23 @@ const (
 	EventAttemptRetry = "attempt_retry"
 )
 
-// Validate 校验配置必需项。
+// Validate 校验配置必需项与装配期约束（工具预算下界见 MinIterationsForToolRound）。
 func (c Config) Validate() error {
 	if c.Model == nil {
 		return fmt.Errorf("agentrun: Model 不能为空")
 	}
 	if c.Instruction == "" {
 		return fmt.Errorf("agentrun: Instruction 不能为空")
+	}
+	// 装配期防线（agent#144）：MinIterationsForToolRound 的成对承诺——配了工具
+	// 却把 MaxIterations 填成 1（「循环轮数」直觉）时，纯问答能跑通、任何工具
+	// 任务的终稿调用必然撞上限（agent#60 实弹形态）。这是本包唯一的装配期入口
+	// （run 第一行调用），在此直接拒绝比运行期报「模型没产出终稿」便宜得多。
+	// 未配工具时 1 是合法配置（一次调用即终稿），不在此列。
+	if c.MaxIterations > 0 && c.MaxIterations < MinIterationsForToolRound &&
+		(len(c.Tools) > 0 || c.ToolsFactory != nil) {
+		return fmt.Errorf("agentrun: MaxIterations=%d 小于 MinIterationsForToolRound=%d——配置了工具时「工具轮 + 终稿」至少需要 %d 次模型调用，当前预算在工具轮之后的终稿调用处必然耗尽（agent#60）",
+			c.MaxIterations, MinIterationsForToolRound, MinIterationsForToolRound)
 	}
 	return nil
 }
@@ -412,12 +424,20 @@ func run(ctx context.Context, cfg Config, query string, onEvent func(Event)) (st
 		return "", &runError{err: werr, lastReasoning: h.lastReasoning}
 	}
 	if !h.sawFinal {
-		return "", &FinalMissingError{Iterations: budget, LastReasoning: h.lastReasoning}
+		return "", h.finalMissingError(false)
 	}
 	if strings.TrimSpace(h.finalText) == "" {
-		return "", &FinalMissingError{EmptyContent: true, Iterations: budget, LastReasoning: h.lastReasoning}
+		return "", h.finalMissingError(true)
 	}
 	return h.finalText, nil
+}
+
+// finalMissingError 构造终稿缺失错误（agent#148）：Iterations 报**实际模型
+// 调用数** h.modelCalls，而不是配置预算 budget——流提前断/空终稿时实际只跑了
+// 1~3 次，报 budget=12 会让排障者按「12 轮都没出终稿」查模型行为，掩盖传输面
+// 的真正根因。
+func (h *reactHandler) finalMissingError(emptyContent bool) *FinalMissingError {
+	return &FinalMissingError{EmptyContent: emptyContent, Iterations: h.modelCalls, LastReasoning: h.lastReasoning}
 }
 
 // FinalMissingError 终稿缺失错误（可重试形态）：迭代耗尽未出口（EmptyContent=false）
@@ -426,7 +446,10 @@ func run(ctx context.Context, cfg Config, query string, onEvent func(Event)) (st
 // content 空 → 整程重跑 32 次只读调用重放）。携带最后一段思考片段供重试侧救回：
 // 分析已完成时重试查询附上存档，模型直接产出终稿，不再从头重放工具采集。
 type FinalMissingError struct {
-	EmptyContent  bool
+	EmptyContent bool
+	// Iterations 实际发生的模型调用次数（不是配置的 MaxIterations 预算；
+	// agent#148：流提前断时旧实现报预算，错误文案把排障引向「模型耗费了
+	// 全部轮次」而非传输面根因）。
 	Iterations    int
 	LastReasoning string // 最后一轮 assistant 消息的 reasoning_content（可能为空）
 }
