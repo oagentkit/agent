@@ -85,3 +85,103 @@ func TestResolveAnswerMultiCharNegation_Issue129(t *testing.T) {
 		t.Fatalf("三元下多字否定不应翻转: (%q,%v)", picked, ok)
 	}
 }
+
+// TestOrdinalIndexMultiDigit_Issue147 多位数序数（阿拉伯数字）与汉字十位合成
+// ——单 rune 限制曾让「第10个」及以上整类解析失败，选项数 >9 时用户的明确
+// 选择被当换话题丢弃。
+func TestOrdinalIndexMultiDigit_Issue147(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+		ok   bool
+	}{
+		{"第10个", 10, true},
+		{"第10", 10, true},
+		{"第 10 个", 10, true},
+		{"第10个。", 10, true},
+		{"选项12", 12, true},
+		{"10", 10, true},
+		{"第十个", 10, true},
+		{"第十", 10, true},
+		{"第十一", 11, true},
+		{"第二十个", 20, true},
+		{"第二十三", 23, true},
+		{"九十九", 99, true},
+		// 普通句子仍不误伤（剥缀后残留非纯数字）。
+		{"第10个进程在跑", 0, false},
+		{"第十个进程在跑", 0, false},
+		{"十全十美", 0, false},
+		{"第", 0, false},
+		{"", 0, false},
+	}
+	for _, c := range cases {
+		n, ok := OrdinalIndex(c.in)
+		if ok != c.ok || (ok && n != c.want) {
+			t.Errorf("OrdinalIndex(%q) = (%d,%v), want (%d,%v)", c.in, n, ok, c.want, c.ok)
+		}
+	}
+}
+
+// TestResolveAnswerOrdinalBeyondNine_Issue147 选项数 >9 时「第10个」必须消解到
+// 第 10 个选项，而不是落到 Contains/换话题路径。
+func TestResolveAnswerOrdinalBeyondNine_Issue147(t *testing.T) {
+	options := []string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"}
+	fallback := "不清楚，全面查"
+	for _, c := range []struct {
+		answer string
+		want   string
+	}{
+		{"第10个", "J"},
+		{"第十个", "J"},
+		{"第十一个", "K"},
+		{"第12个", "L"},
+		{"第 10 个。", "J"},
+	} {
+		picked, isFb, ok := ResolveAnswer(options, fallback, c.answer)
+		if !ok || isFb || picked != c.want {
+			t.Errorf("%s: ResolveAnswer = (%q,%v,%v), want (%q,false,true)", c.answer, picked, isFb, ok, c.want)
+		}
+	}
+	// 越界序数仍按「放弃消解」处理（由调用方按换话题/逃生路径处置）。
+	if picked, _, ok := ResolveAnswer(options, fallback, "第13个"); ok || picked != "" {
+		t.Fatalf("越界序数不应消解: (%q,%v)", picked, ok)
+	}
+}
+
+// TestResolveAnswerEnglishNegation_Issue146 英文否定与中文同权：否定词表纯中文
+// 时「not yes」会被 Contains 当成选择了 yes（二元题翻转防护对英文整体缺席）。
+func TestResolveAnswerEnglishNegation_Issue146(t *testing.T) {
+	fb := "not sure"
+	// 二元翻转：英文否定 → 另一个选项。
+	for _, c := range []struct {
+		name    string
+		options []string
+		answer  string
+		want    string
+	}{
+		{"not yes → no", []string{"yes", "no"}, "not yes", "no"},
+		{"never yes → no", []string{"yes", "no"}, "never yes", "no"},
+		{"don't yes → no", []string{"yes", "no"}, "don't yes", "no"},
+		{"dont yes → no", []string{"yes", "no"}, "dont yes", "no"},
+		{"no thanks → later", []string{"thanks", "later"}, "no thanks", "later"},
+		{"not delete database → keep snapshot", []string{"delete database", "keep snapshot"}, "not delete database", "keep snapshot"},
+	} {
+		picked, isFb, ok := ResolveAnswer(c.options, fb, c.answer)
+		if !ok || isFb || picked != c.want {
+			t.Errorf("%s: ResolveAnswer(%q) = (%q,%v,%v), want (%q,false,true)",
+				c.name, c.answer, picked, isFb, ok, c.want)
+		}
+	}
+	// 精确命中仍优先：「no」本身就是选项时直接选中，不被否定逻辑吞掉。
+	if picked, _, ok := ResolveAnswer([]string{"yes", "no"}, fb, "no"); !ok || picked != "no" {
+		t.Fatalf("精确选项 no 应命中: (%q,%v)", picked, ok)
+	}
+	// 非二元且否定无法定位（不被否定的最长/唯一选项也不存在）→ 不翻转。
+	if picked, _, ok := ResolveAnswer([]string{"yes", "maybe", "ok"}, fb, "not yes"); ok || picked != "" {
+		t.Fatalf("三元下英文否定不应翻转: (%q,%v)", picked, ok)
+	}
+	// 中文既有形态不回退。
+	if picked, _, ok := ResolveAnswer([]string{"是", "否"}, fb, "不是"); !ok || picked != "否" {
+		t.Fatalf("中文否定翻转漂移: (%q,%v)", picked, ok)
+	}
+}

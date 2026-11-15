@@ -100,3 +100,57 @@ func TestNewRejectsOutOfRangeThresholds_Issue130(t *testing.T) {
 		}
 	}
 }
+
+// TestDecisionFaceNaNGates_Issue145 决策面返回 NaN 置信度时，两道闸都必须拒绝：
+//   - decMinCF 的 `d.Confidence < r.decMinCF` 对 NaN 恒 false（设了门槛反而放行）；
+//   - globalGate 的 IsNaN 裹在 `minCF > 0` 内（缺省 0 门槛时整段短路）。
+//
+// 决策面是外部接口，实现方从概率分布算置信度时除零/空分布产出 NaN 完全可能；
+// NaN 不是「低置信」而是「无效值」，必须回落 LLM 面，不得静默采纳进分发面。
+func TestDecisionFaceNaNGates_Issue145(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		decMinCF float64
+	}{
+		{"决策面门槛 >0（decMinCF 比较对 NaN 恒 false）", 0.5},
+		{"决策面门槛 =0（globalGate 的 IsNaN 被 minCF>0 短路）", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			face := &stubDecisionFace{route: "bug-fix", conf: math.NaN()}
+			r, llm, observed, observedErrs := newDecisionRouter(t, face, c.decMinCF, false)
+			d, err := r.Classify(context.Background(), "修 bug")
+			if err != nil {
+				t.Fatalf("NaN 应回落 LLM 面成功，实际 err=%v", err)
+			}
+			if d.Source != SourceLLM {
+				t.Fatalf("NaN 决策面结果不得采纳（source=%s）: %+v", d.Source, d)
+			}
+			if llm.Calls != 1 {
+				t.Fatalf("应回落 LLM 面一次，实际 %d 次", llm.Calls)
+			}
+			if len(*observed) != 1 || (*observedErrs)[0] == nil {
+				t.Fatalf("观察钩子应记录一次带拒绝原因的决策面结果: observed=%+v errs=%v", *observed, *observedErrs)
+			}
+		})
+	}
+}
+
+// TestGlobalGateRejectsNaNWithoutThreshold_Issue145 全局门槛缺省（0=不设门槛）
+// 时 NaN 同样不得放行——「不设门槛」不是「接受无效值」。直接钉闸门本身，
+// 不依赖决策面路径（LLM 面 JSON 无法产出 NaN，但闸门契约必须自洽）。
+func TestGlobalGateRejectsNaNWithoutThreshold_Issue145(t *testing.T) {
+	r, err := New(&Config{
+		Model:  &llmtest.Model{RepeatLast: true, Script: []llmtest.Resp{{Content: `{"route":"bug-fix","confidence":0.9,"reason":"ok"}`}}},
+		Routes: testRoutes(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = r.globalGate(Decision{Route: "bug-fix", Confidence: math.NaN()})
+	if err == nil {
+		t.Fatal("MinConfidence=0 时 NaN 也必须拒绝（无效值不是低置信）")
+	}
+	if !strings.Contains(err.Error(), "NaN") {
+		t.Fatalf("报错文案应点名 NaN: %v", err)
+	}
+}

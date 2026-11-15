@@ -34,6 +34,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 )
 
 // 判定来源常量（Decision.Source）。
@@ -90,6 +91,10 @@ func (r *Router) classifyByDecisionFace(ctx context.Context, input string) (Deci
 	if err == nil {
 		if _, ok := r.byName[d.Route]; !ok {
 			err = fmt.Errorf("router: 决策面结果 %q 不在路由表", d.Route)
+		} else if math.IsNaN(d.Confidence) {
+			// NaN 不是「低置信」而是「无效值」：显式拒绝先于门槛比较（agent#145）。
+			// NaN < decMinCF 恒为 false——此前设了决策面门槛反而放行 NaN。
+			err = fmt.Errorf("router: 决策面置信度为 NaN（无效值，拒绝采纳）")
 		} else if r.decMinCF > 0 && d.Confidence < r.decMinCF {
 			err = fmt.Errorf("router: 决策面置信度 %.2f 低于阈值 %.2f", d.Confidence, r.decMinCF)
 		}

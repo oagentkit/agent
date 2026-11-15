@@ -190,7 +190,8 @@ func (r *Router) Classify(ctx context.Context, input string) (Decision, error) {
 		// 全局面复检（agent#107）：classifyByDecisionFace 只过决策面自己的
 		// decMinCF 与路由表；全局 MinConfidence 是另一道闸（两个门槛语义不同
 		// ——全局门槛约束**所有来源**的采纳，决策面门槛只约束决策面自身的
-		// 置信口径），NaN 也在此拦下（clamp01 不拦 NaN：NaN < 阈值恒假）。
+		// 置信口径），NaN 也无条件在此拦下（clamp01 不拦 NaN：NaN < 阈值恒假；
+		// agent#145）。
 		if derr == nil {
 			derr = r.globalGate(d)
 		}
@@ -241,13 +242,18 @@ func (r *Router) Classify(ctx context.Context, input string) (Decision, error) {
 
 // globalGate 全局门槛（路由表合法性 + 全局 MinConfidence，agent#107）：
 // LLM 面与决策面采纳路径共用同一道闸——「门槛自守」承诺对两个判定面同时成立。
-// NaN 置信度在此拦下：clamp01 不拦 NaN（NaN < 阈值恒假），NaN 穿过置信门槛
-// 即静默采纳。
+// NaN 置信度**无论是否设门槛**都在此拦下（agent#145）：NaN 不是「低置信」而是
+// 「无效值」，clamp01 不拦它（NaN < 阈值恒假），而此前 IsNaN 裹在 minCF>0 内
+// ⇒ 缺省门槛（0）时 NaN 穿过所有闸门静默采纳，进观测钩子与 json.Marshal
+// （NaN 非合法 JSON 值，序列化直接报错）。
 func (r *Router) globalGate(d Decision) error {
 	if _, ok := r.byName[d.Route]; !ok {
 		return fmt.Errorf("router: 分类结果 %q 不在路由表", d.Route)
 	}
-	if r.minCF > 0 && (d.Confidence < r.minCF || math.IsNaN(d.Confidence)) {
+	if math.IsNaN(d.Confidence) {
+		return fmt.Errorf("router: 置信度为 NaN（无效值，拒绝采纳）")
+	}
+	if r.minCF > 0 && d.Confidence < r.minCF {
 		return fmt.Errorf("router: 置信度 %.2f 低于阈值 %.2f", d.Confidence, r.minCF)
 	}
 	return nil

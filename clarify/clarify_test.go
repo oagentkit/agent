@@ -25,7 +25,7 @@ func TestOrdinalIndex(t *testing.T) {
 		{"选项三", 3, true},
 		{"选一", 1, true},
 		{"1.", 1, true},
-		{"十", 0, false},      // 超出汉字数字表
+		{"十", 10, true},      // 汉字十位合成（agent#147）
 		{"第五个", 0, false},    // 越界由调用方按 len(options) 判，这里解析本身成立=5？
 		{"1个进程在跑", 0, false}, // 普通句子不误伤（剥离后非单字）
 		{"看看日志吧", 0, false},
