@@ -37,11 +37,7 @@ require (
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/oekit/concurrency v0.40.0 // indirect
 	github.com/oekit/logx v0.12.1 // indirect
-<<<<<<< HEAD
-	github.com/oekit/pkg v0.61.1 // indirect
-=======
 	github.com/oekit/pkg v0.61.2 // indirect
->>>>>>> 739a34e (build: 依赖地板对齐——pkg → v0.61.2)
 	github.com/pelletier/go-toml/v2 v2.0.9 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
