@@ -31,6 +31,14 @@ agentrun 的迭代语义同层）。
   第二十三个）
 每单带回归测试；go build / go test -race / go vet / gofmt / golangci-lint 全绿。
 
+- 构建：依赖地板追平——textx → v0.14.0
+
+* docs(changelog): 预写 v0.16.0 待发版段
+由 release.py prewrite 生成。
+本提交**只**改 CHANGELOG.md——混入别的文件会被 squash 合成一个提交，
+生成器按「实际改了哪些文件」剔除零信息量提交的判据就会失效。
+* build: 依赖地板追平——textx → v0.14.0
+
 - 构建：依赖地板对齐——pkg → v0.61.4
 - 构建：依赖地板对齐——pkg → v0.61.3
 - 构建：依赖地板对齐——pkg → v0.61.2
