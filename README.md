@@ -1,6 +1,6 @@
 # agent
 
-Agent 编排——ReAct 运行样板/计划先行/反思循环/意图路由/多专家黑板/派发守卫 —— oagentkit 模块矩阵 **tier 3**（编排层，依赖 llm 等 tier2 门面）。
+Agent 编排——ReAct 运行样板/计划先行/反思循环/意图路由/多专家黑板/派发守卫/回合守卫 —— oagentkit 模块矩阵 **tier 3**（编排层，依赖 llm 等 tier2 门面）。
 
 ```
 go get github.com/oagentkit/agent
@@ -14,6 +14,7 @@ go get github.com/oagentkit/agent
 | `blackboard` | 无中心多专家协作黑板 |
 | `dispatch` | 通用派发守卫：allow 矩阵 + 深度上限 + 自派发拒绝 |
 | `clarify` | 澄清与标准化词表内核 |
+| `roundguard` | 回合守卫：模型侧循环的结局分类/次数预算/无进展检测与组合结论（跨宿主共享判据）。自 goagent-kernel 平移（归属评测 2026-11-26：单 agent 循环判据，与多智能体编排无关）；设计 spec 见 docs/superpowers/specs/2026-11-21-roundguard-agent-loop-design.md，变异矩阵锚定该 spec 防漂移 |
 
 ## 定位
 

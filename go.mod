@@ -7,6 +7,7 @@ require (
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
 	github.com/oagentkit/llm v0.27.0
 	github.com/oagentkit/textx v0.13.0
+	github.com/oekit/pkg v0.61.4
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -37,7 +38,6 @@ require (
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/oekit/concurrency v0.40.0 // indirect
 	github.com/oekit/logx v0.12.1 // indirect
-	github.com/oekit/pkg v0.61.4 // indirect
 	github.com/pelletier/go-toml/v2 v2.0.9 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
