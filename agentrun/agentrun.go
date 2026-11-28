@@ -1,6 +1,9 @@
 // Package agentrun ReAct agent 运行样板：封装 eino ADK 的
 // ChatModelAgent + Runner 构造、事件流 drain、最终文本提取与失败重试。
 //
+// 生命周期: Experimental——ReAct 运行样板未过一个 minor 无 breaking 窗口
+// （api-compat.md 晋级条件一），初值如实记为不承诺兼容。
+//
 // 从 Argus 的 R3 执行模式提炼——任何"单 agent 带工具自主循环"的场景
 // 都可以直接用，不必重写 ADK 样板：
 //

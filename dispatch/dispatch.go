@@ -1,4 +1,8 @@
 // Package dispatch 通用派发守卫：allow 矩阵 + 深度上限 + 自派发拒绝。
+//
+// 生命周期: Experimental——派发守卫 allow 矩阵未过一个 minor 无 breaking 窗口
+// （api-compat.md 晋级条件一），初值如实记为不承诺兼容。
+//
 // 拓扑边由宿主经 EdgeSource 抽象提供（编译期校验过的 allow 矩阵），守卫运行期只读；
 // 被拒绝的派发返回结构化 *DenyError——调用方不得转述、不得降级，按失败兜底如实上报。
 // 沉淀自 bianque engine/dispatch（v0.9.5）：注册表耦合改为 EdgeSource 接口。

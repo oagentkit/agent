@@ -1,5 +1,8 @@
 // Package blackboard 黑板（Blackboard）架构原语：共享状态板 + 多专家轮转读写。
 //
+// 生命周期: Experimental——黑板共享状态与 Convene 轮转未过一个 minor 无
+// breaking 窗口（api-compat.md 晋级条件一），初值如实记为不承诺兼容。
+//
 // 与 Supervisor（eino adk prebuilt：中心调度员指派任务）不同，Blackboard 没有
 // 调度员——每位专家自行观察黑板增量、判断与己相关则贡献条目；循环至无人再写
 // 或达轮次上限。适用：多视角分析（多角色并行审阅同一材料、结论互相引用），
