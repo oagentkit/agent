@@ -8,6 +8,7 @@ go get github.com/oagentkit/agent
 
 | 包 | 职责 |
 |---|---|
+| `iface` | Agent 执行面窄接口（`Run(ctx, Input) (Result, error)`）——三入口适配器的统一读面，纯声明零依赖（agent#174） |
 | `agentrun` | ReAct 运行样板与计划先行（PlanAndExecute）编排 |
 | `reflection` | 反思循环 |
 | `router` | 显式意图路由（三种执行体：词面 → **决策面**（System One 等非自回归判定模型，毫秒级）→ LLM 面（生成）） |
