@@ -30,3 +30,7 @@ packages:
     level: Experimental
     since: v0.16.0
     reason: 回合守卫：模型侧循环的结局分类 / 次数预算 / 无进展检测与组合收口结论；未过一个 minor 无 breaking 窗口（api-compat.md 晋级条件一），初值如实记为不承诺兼容
+  - pkg: iface
+    level: Experimental
+    since: v0.17.0
+    reason: "Agent 执行面窄接口（agent#174 裁决：接口归 Agent 层，agentrun 编译期断言可查证；0.x 阶段 minor 允许 breaking，未过晋级窗口，初值不承诺兼容）"
