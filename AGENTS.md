@@ -69,6 +69,15 @@ tag 不可重打，只能补发新 tag。
   不得绕过门面直接调 provider/MCP client。
 - 反思循环与黑板协作必须有**深度上限与终止条件**，防止无限循环。
 - 派发守卫的 allow 矩阵是白名单，默认拒绝；并有**自派发拒绝**（防止无限递归）。
+- **防过度抽象红线（agent#177）：多 Agent ≠ 多个 ReAct 循环。** 新增「多专家
+  协作」类能力时，确定性调度判据（可达性 / 递归上限 / 并发 / 优先级 / 预算 /
+  上下文可见性）**一律进既有归属面**（`agent/dispatch`、`agent/blackboard`、
+  `toolgate/toolsched`、`goagent-kernel/scheduling`、`llm` 预算面、`promptx`
+  注入面），只有**决策内容**（派谁、给多少预算、共享什么、失败降级到哪）留在
+  宿主编排代码——禁止在 agent 层新建第二份调度判定。判据级归属表见
+  [`matrix-tools` ADR-001 附录 §六](https://github.com/oagentkit/matrix-tools/blob/main/docs/adr/ADR-001-三层边界与八机制归属.md)，
+  机读单源 `modules.json` `mechanisms.scheduling.criteria`，落点越界由
+  `verify_mechanism_ownership.py` 判红。
 
 ## 明确不属于本仓的
 
