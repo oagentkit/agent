@@ -1,6 +1,9 @@
 // Package roundguard 回合守卫：模型侧循环的**结局分类 / 次数预算 / 无进展检测**
 // 与它们的**组合结论**——跨宿主共享的判据。
 //
+// 生命周期: Experimental——回合预算与收口策略未过一个 minor 无 breaking 窗口
+// （api-compat.md 晋级条件一），初值如实记为不承诺兼容。
+//
 // 本包自 goagent-kernel 平移而来（归属评测 2026-11-26：单 agent 循环判据，
 // 与多智能体编排无关）。API 承诺：0.x 阶段 minor 允许 breaking（org 通行约定）。
 //

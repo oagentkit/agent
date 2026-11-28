@@ -1,5 +1,8 @@
 // Package router 路由（Router）架构原语：LLM 意图分类 → 选路 → 分发执行。
 //
+// 生命周期: Experimental——意图选路与门槛判定面未过一个 minor 无 breaking 窗口
+// （api-compat.md 晋级条件一），初值如实记为不承诺兼容。
+//
 // 与 skill 包"agent 自主 use_skill"（隐式路由，决策权在执行 agent）不同，
 // router 是显式路由：先用一次廉价分类调用决定走哪条处理链，再交给对应 handler
 // （handler 可以是 ReAct agent、Plan-and-Execute、单轮生成——任意编排）。

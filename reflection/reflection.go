@@ -1,5 +1,8 @@
 // Package reflection 反思（Reflection）架构原语：生成 → 自我批判 → 修订的收敛循环。
 //
+// 生命周期: Experimental——批判/修订循环契约未过一个 minor 无 breaking 窗口
+// （api-compat.md 晋级条件一），初值如实记为不承诺兼容。
+//
 // 流程：按 Task 对 Input 产出初稿 → Critic 按 Rubric 评审（结构化 JSON：
 // pass/issues）→ 未通过则带 issues 修订重写 → 收敛（pass）或达轮次上限返回末稿。
 //

@@ -1,0 +1,32 @@
+# api-lifecycle 定级清单（判据同源 matrix-tools docs/adr/ADR-002 引用的
+# yi-nology/goagent-kernel docs/api-compat.md：breaking 四类 / 三级承诺 / 晋级三维）
+version: 1
+packages:
+  - pkg: agentrun
+    level: Experimental
+    since: v0.16.0
+    reason: ReAct agent 运行样板（eino ADK ChatModelAgent/Runner 封装、事件 drain、迭代预算判定）；未过一个 minor 无 breaking 窗口（api-compat.md 晋级条件一），初值如实记为不承诺兼容
+  - pkg: reflection
+    level: Experimental
+    since: v0.16.0
+    reason: 反思架构原语：生成 → 自我批判 → 修订的收敛循环（Task/Critic/Rubric 契约）；未过一个 minor 无 breaking 窗口（api-compat.md 晋级条件一），初值如实记为不承诺兼容
+  - pkg: router
+    level: Experimental
+    since: v0.16.0
+    reason: 显式路由架构原语：LLM 意图分类 → 选路 → 分发（含置信度门槛与关键词兜底判定）；未过一个 minor 无 breaking 窗口（api-compat.md 晋级条件一），初值如实记为不承诺兼容
+  - pkg: blackboard
+    level: Experimental
+    since: v0.16.0
+    reason: 黑板架构原语：共享状态板 + 多专家轮转读写（无中心调度员的多视角协作）；未过一个 minor 无 breaking 窗口（api-compat.md 晋级条件一），初值如实记为不承诺兼容
+  - pkg: dispatch
+    level: Experimental
+    since: v0.16.0
+    reason: 通用派发守卫：allow 矩阵 + 深度上限 + 自派发拒绝（宿主拓扑边的消费点）；未过一个 minor 无 breaking 窗口（api-compat.md 晋级条件一），初值如实记为不承诺兼容
+  - pkg: clarify
+    level: Experimental
+    since: v0.16.0
+    reason: 澄清/标准化词表内核：term_map 模型、外置加载校验与回答消解纯逻辑；未过一个 minor 无 breaking 窗口（api-compat.md 晋级条件一），初值如实记为不承诺兼容
+  - pkg: roundguard
+    level: Experimental
+    since: v0.16.0
+    reason: 回合守卫：模型侧循环的结局分类 / 次数预算 / 无进展检测与组合收口结论；未过一个 minor 无 breaking 窗口（api-compat.md 晋级条件一），初值如实记为不承诺兼容
