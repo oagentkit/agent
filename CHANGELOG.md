@@ -2,6 +2,37 @@
 
 > 本文件由 `matrix-tools/scripts/gen_changelogs.py` 从 git 历史生成，按 tag 切段、取每段内的 conventional commit 渲染。
 
+## [v0.17.0] — 2026-11-28
+
+### 新增(iface)：Agent 窄接口归属裁决 + agentrun 适配器（#174）
+
+评审 2.3-问题一（Agent 层没有接口面）+ 阶段一（优先稳定 Agent 接口）：
+- docs/adr/ADR-001：三入口**实测**对照表（参数/返回/事件/取消四列，含事实勘误
+  ——contract 实测没有 Run/Step/Interrupt/Resume 四元组，它是边界接口+状态词表）
+  + 归属裁决（接口放 Agent 层四条理由、拒收装配层三条、窄接口三自我约束）
+  + 三适配器落点与不强迁存量
+- agent/iface：纯声明零依赖——Input/Result/Event/Agent（Run(ctx, Input)
+  (Result, error)）；状态词表不另立（遵循 contract，本包不定义常量）、
+  事件透传原生词表不做翻译层
+- agentrun/iface.go：agentrun.Agent 适配器（参数/结果/事件三映射 + 状态分类）
+  + 编译期断言 var _ iface.Agent = (*Agent)(nil)——接口归 Agent 层的核心收益
+- agentrun/iface_test.go：成功/失败/事件透传/SessionID 忽略/状态分类（含 wrap
+  穿透），复用本包 httptest 网关替身
+- api-lifecycle：iface 定级 Experimental（since v0.17.0，#256 判据）
+- README/AGENTS 包面登记
+跨仓后续：runtime bridge/agentiface 出 agentloop+contract 两个适配器
+（agent 先发版 v0.17.0 后 bump 地板，基座先行）。
+Fixes #174
+
+### 新增(api-lifecycle)：接入定级清单（7 包，判据同源 ADR-002）
+
+- 5fba65e
+
+- 杂务(deps)：依赖地板追到最新——github.com/oekit/pkg v0.61.5
+
+chore(deps): 依赖地板追到最新（github.com/oekit/pkg v0.61.5）。
+
+
 ## [v0.16.0] — 2026-11-26
 
 ### 新增：承接 kernel 回合守卫（roundguard）
