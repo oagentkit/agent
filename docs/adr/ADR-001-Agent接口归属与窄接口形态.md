@@ -1,5 +1,7 @@
 # ADR-001 · Agent 接口归属与窄接口形态
 
+> **分面声明**（双 ADR 协调，matrix-tools#275）：本 ADR 是**仓内面 canon**（三入口对照表详版、四条归属理由、适配器落点与测试面以本篇为准）；治理面 canon 是 `oagentkit/matrix-tools` 的 `docs/adr/ADR-003-统一Agent执行接口的归属与形态.md`（三方案拒收面 / 门禁接线 / 与 ADR-001/002/ADR-0010 的集成关系）。两篇核心裁决逐条一致，实现锚点以 `oagentkit/agent/iface` 与 `yi-nology/goagent-runtime/agentiface` 为准。
+
 | 项 | 内容 |
 |---|---|
 | **状态** | 已采纳（Accepted） |
