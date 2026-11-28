@@ -4,6 +4,19 @@
 
 ## [v0.17.0] — 2026-11-28
 
+### 新增(test)：中断/恢复/用户介入三行为契约测试（#176）
+
+行为契约消费方半边（两仓各跑一半：机制半边 kernel#523 故障注入矩阵）：
+- agentrun/contract_interrupt_resume_test.go：①中断→继续（预算断流后
+  事件面对账落台账，恢复跑已完成步骤重放不执行——整链每步至多一次）；
+  ②用户介入→恢复（WithCancelCause 携带唯一哨兵 ⇒ 落非空终态 cancelled，
+  空串/failed 误判判红——对标 kernel #333 滞留 running 形态；哨兵身份按值
+  不按文案，同文案复制件不认领）；③派发子 Agent 失败→回父（DenyError
+  结构化拒绝三路径 + 子失败回落，父侧每条出口落终态不留 running 残留）
+- contract mock 只复刻消费方语义（完成台账+严格递增落账 / 唯一哨兵身份），
+  不复刻机制实现——tier3 不 import kernel 的分层红线；跨仓同形对账由
+  goagent-runtime bridge/agentiface 适配器测试兜
+
 ### 新增(iface)：Agent 窄接口归属裁决 + agentrun 适配器（#174）
 
 评审 2.3-问题一（Agent 层没有接口面）+ 阶段一（优先稳定 Agent 接口）：
